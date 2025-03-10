@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from tqdm import *
+from tqdm import trange
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -50,8 +50,8 @@ class PrioritizedReplayBuffer:
 # ======================== GET STATE (Parse 20D) ========================
 def get_state(obs):
     """
-    Convert the environment's raw observation (16D) into a custom 20D representation.
-    Adjust as needed to ensure consistent shapes.
+    Convert the environment's raw 16D observation into a 20D representation.
+    Adjust if your environment is different.
     """
     stations = [[0, 0], [0, 0], [0, 0], [0, 0]]
     (
@@ -76,16 +76,16 @@ def get_state(obs):
 
     # Return a 20D tuple
     return (
-        taxi_row,
-        taxi_col,
-        stations[0][0], stations[0][1],
-        station_dis[0],
-        stations[1][0], stations[1][1],
-        station_dis[1],
-        stations[2][0], stations[2][1],
-        station_dis[2],
-        stations[3][0], stations[3][1],
-        station_dis[3],
+        taxi_row/5,
+        taxi_col/5,
+        stations[0][0]/5, stations[0][1]/5,
+        station_dis[0]/5,
+        stations[1][0]/5, stations[1][1]/5,
+        station_dis[1]/5,
+        stations[2][0]/5, stations[2][1]/5,
+        station_dis[2]/5,
+        stations[3][0]/5, stations[3][1]/5,
+        station_dis[3]/5,
         obstacle_north,
         obstacle_south,
         obstacle_east,
@@ -98,12 +98,11 @@ def get_state(obs):
 # ======================== PURE DRQN (No Dueling) ========================
 class DRQN(nn.Module):
     """
-    Expects an input of shape (batch_size, input_size).
-    We'll do:
-      1) fc1 => (batch_size, hidden_size)
-      2) unsqueeze => (batch_size, 1, hidden_size)
-      3) LSTM => (batch_size, 1, lstm_hidden_size)
-      4) final fc2 => (batch_size, 1, action_size)
+    Input shape: (batch_size, input_size)
+    1) fc1 -> (batch_size, hidden_size)
+    2) unsqueeze -> (batch_size, 1, hidden_size)
+    3) LSTM -> (batch_size, 1, lstm_hidden_size)
+    4) fc2 -> (batch_size, 1, action_size)
     """
     def __init__(self, input_size, hidden_size, lstm_hidden_size, action_size):
         super(DRQN, self).__init__()
@@ -115,8 +114,8 @@ class DRQN(nn.Module):
     
     def forward(self, x, hidden_state=None):
         # x shape: (batch_size, input_size)
-        x = torch.relu(self.fc1(x))     # => (batch_size, hidden_size)
-        x = x.unsqueeze(1)             # => (batch_size, 1, hidden_size)
+        x = torch.relu(self.fc1(x))   # => (batch_size, hidden_size)
+        x = x.unsqueeze(1)           # => (batch_size, 1, hidden_size)
 
         if hidden_state is None:
             batch_size = x.size(0)
@@ -135,6 +134,10 @@ class DRQN(nn.Module):
 
 # ======================== DRQN AGENT ========================
 class DRQNAgent:
+    """
+    The agent uses states shaped as (batch_size, state_size).
+    "act" uses (1, state_size) for single step. We do an LSTM hidden state pass.
+    """
     def __init__(self, state_size, action_size, hidden_size=64, lstm_hidden_size=64,
                  gamma=0.99, learning_rate=0.001, tau=0.001,
                  epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.999, buffer_size=10000):
@@ -159,7 +162,8 @@ class DRQNAgent:
 
     def reset_hidden_state(self):
         """
-        We'll store the hidden state as (h, c), each shaped (1, batch_size=1, hidden_size).
+        Returns (h0, c0) each shaped [1, batch_size=1, hidden_size]
+        for single-step inference.
         """
         h0 = torch.zeros(1, 1, self.policy_net.hidden_size).to(self.device)
         c0 = torch.zeros(1, 1, self.policy_net.hidden_size).to(self.device)
@@ -168,55 +172,60 @@ class DRQNAgent:
     def act(self, state, hidden_state):
         """
         state shape: (state_size,) => (1, state_size)
-        => forward => (1, 1, action_size)
+        => forward => (1,1,action_size)
         """
-        state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)  
-        
+        state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+
         if random.random() < self.epsilon:
             action = random.randint(0, self.action_size - 1)
-            # do a forward pass to update hidden_state
+            # forward pass to update hidden_state
             with torch.no_grad():
                 _, hidden_state = self.policy_net(state_t, hidden_state)
         else:
             with torch.no_grad():
                 q_values, hidden_state = self.policy_net(state_t, hidden_state)
-                # q_values => (1, 1, action_size)
+                # shape => (1, 1, action_size)
                 action = q_values.argmax(dim=2).item()
+
         return action, hidden_state
 
     def learn(self, batch_size=64, beta=0.4):
+        """
+        We remove epsilon decay from here and do it once per episode in train().
+        """
         if len(self.memory) < batch_size:
             return
         
         batch, indices, weights = self.memory.sample(batch_size, beta)
-        # batch => [states, actions, rewards, next_states, dones]
         states, actions, rewards, next_states, dones = batch
         
-        states_t = torch.FloatTensor(states).to(self.device)      
+        states_t = torch.FloatTensor(states).to(self.device)
         next_states_t = torch.FloatTensor(next_states).to(self.device)
         rewards_t = torch.FloatTensor(rewards).to(self.device)
         dones_t = torch.FloatTensor(dones).to(self.device)
 
-        q_values, _ = self.policy_net(states_t)              # => (batch_size, 1, action_size)
-        next_q_values, _ = self.target_net(next_states_t)    # => (batch_size, 1, action_size)
+        # Predict current Q
+        q_values, _ = self.policy_net(states_t)
+        # Predict next Q
+        next_q_values, _ = self.target_net(next_states_t)
 
-        # max along actions => shape (batch_size, 1) => then squeeze => (batch_size,)
+        # Double DQN logic? 
+        # Currently just normal DQN: max over next_q_values
         max_next_q = next_q_values.max(dim=2)[0].squeeze(1)
         target_q = rewards_t + self.gamma * max_next_q * (1 - dones_t)
 
         actions_t = torch.LongTensor(actions).to(self.device)
         predicted_q = q_values.squeeze(1).gather(1, actions_t.unsqueeze(1)).squeeze(1)
-        
+
         td_error = target_q - predicted_q
         loss = (weights * td_error.pow(2)).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
+
         # Update priorities
         self.memory.update_priorities(indices, td_error.detach().cpu().numpy())
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
     def save(self, filename):
         torch.save(self.policy_net.state_dict(), filename)
@@ -229,9 +238,7 @@ class DRQNAgent:
 # ======================== GET ACTION ========================
 def get_action(obs):
     """
-    Called at test time by the environment.
-    We'll parse the obs into 20D, load the model if needed,
-    run the forward pass with epsilon=0, etc.
+    For evaluation: parse obs, run forward pass with epsilon=0
     """
     STATE_SIZE = 20
     ACTION_SIZE = 6
@@ -240,47 +247,51 @@ def get_action(obs):
         get_action.agent = DRQNAgent(STATE_SIZE, ACTION_SIZE)
         get_action.agent.load("drqn_final.pt")
         get_action.hidden_state = get_action.agent.reset_hidden_state()
-        get_action.agent.epsilon = 0.0  # Turn off exploration at test
+        # Turn off exploration for testing
+        get_action.agent.epsilon = 0.0
 
-    # Convert env obs (16D) to 20D
+    # Convert env obs => 20D
     state_20d = get_state(obs)
-    state_t = np.array(state_20d, dtype=np.float32)
+    state = np.array(state_20d, dtype=np.float32)
 
-    action, get_action.hidden_state = get_action.agent.act(state_t, get_action.hidden_state)
+    action, get_action.hidden_state = get_action.agent.act(state, get_action.hidden_state)
     return action
-
 
 # ======================== TRAINING LOOP ========================
 def train(env, agent, num_episodes=500):
-    for episode in trange(num_episodes):
+    episode_rewards = []
+    for episode in trange(num_episodes, desc="Training"):
         raw_obs, _ = env.reset()
-        obs = get_state(raw_obs)  # convert 16D to 20D
+        obs = get_state(raw_obs)  
         hidden_state = agent.reset_hidden_state()
         done = False
 
         total_reward = 0.0
-        rewards = np.array([])
         while not done:
             action, hidden_state = agent.act(obs, hidden_state)
             raw_next_obs, reward, done, _, _ = env.step(action)
             next_obs = get_state(raw_next_obs)
 
+            # Store in replay
             agent.memory.add(obs, action, reward, next_obs, done)
             agent.learn()
 
             obs = next_obs
             total_reward += reward
-            rewards = np.append(rewards, reward)
-        if (episode + 1) % 50 == 0:
-            print(f"[Episode {episode+1}/{num_episodes}] Reward={rewards[-100:].mean:.2f}, Epsilon={agent.epsilon:.3f}")
 
-    agent.save("drqn_final.pt")
+        # Decay epsilon ONCE PER EPISODE
+        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+
+        episode_rewards.append(total_reward)
+        if (episode + 1) % 50 == 0:
+            last50_mean = np.mean(episode_rewards[-50:])
+            print(f"\nEpisode {episode+1}/{num_episodes}, Epsilon={agent.epsilon:.3f}, Last50Reward={last50_mean:.2f}")
+
+    agent.save("DRQN.pt")
 
 
 # ======================== MAIN ========================
 if __name__ == "__main__":
     env = SimpleTaxiEnv()
-    state_size = 20  # after parsing
-    action_size = 6
-    agent = DRQNAgent(state_size, action_size)
+    agent = DRQNAgent(state_size=20, action_size=6, epsilon_decay=0.999)  # or 0.995, etc.
     train(env, agent, num_episodes=500)
