@@ -2,3 +2,4 @@ tqdm
 requests
 argparse
 torch
+ipython
