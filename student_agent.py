@@ -245,7 +245,7 @@ def get_action(obs):
     
     if not hasattr(get_action, "agent"):
         get_action.agent = DRQNAgent(STATE_SIZE, ACTION_SIZE)
-        get_action.agent.load("DRQN.pt")
+        get_action.agent.load("drqn_final.pt")
         get_action.hidden_state = get_action.agent.reset_hidden_state()
         # Turn off exploration for testing
         get_action.agent.epsilon = 0.0
