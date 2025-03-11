@@ -241,13 +241,13 @@ if __name__ == "__main__":
         gamma=0.99,
         epsilon=1.0,
         epsilon_min=0.01,
-        epsilon_decay=0.9999,
+        epsilon_decay=0.99999,
         action_size=6
     )
-    env = SimpleTaxiEnv(5, 5000)
+    env = SimpleTaxiEnv(10, 5000)
 
     # 開始訓練
-    rewards = train(env, agent, num_episodes=10000)
+    rewards = train(env, agent, num_episodes=100000)
     print("Training complete! Final epsilon=", agent.epsilon)
 
     # 你也可以在這裡測試看看 agent 的表現
