@@ -233,10 +233,12 @@ def get_action(obs):
     # 記住這一刻
     get_action.last_obs = obs
     get_action.last_action = action
+
     return action
 
 # =============== [5] MAIN 訓練/測試範例 (可自行調整) =============== #
 if __name__ == "__main__":
+    ##222
     agent = QLearningAgent(
         alpha=0.1,
         gamma=0.99,
@@ -245,11 +247,10 @@ if __name__ == "__main__":
         epsilon_decay=0.99999,
         action_size=6
     )
-    env = SimpleTaxiEnv(10, 5000)
-    for i in trange(5,11):
-        rewards = train(env, agent, num_episodes=100000)
-        print("Training complete! Final epsilon=", agent.epsilon)
-        agent.epsilon = 1.0    
+    env = SimpleTaxiEnv(5, 5000)
+   
+    rewards = train(env, agent, num_episodes=100000)
+    print("Training complete! Final epsilon=", agent.epsilon)
     # 開始訓練
     
 
