@@ -85,7 +85,7 @@ def get_state(obs):
         stations[2][0]/5, stations[2][1]/5,
         station_dis[2]/5,
         stations[3][0]/5, stations[3][1]/5,
-        station_dis[3]/5,
+        station_dis[3],
         obstacle_north,
         obstacle_south,
         obstacle_east,
@@ -138,7 +138,7 @@ class DRQNAgent:
     The agent uses states shaped as (batch_size, state_size).
     "act" uses (1, state_size) for single step. We do an LSTM hidden state pass.
     """
-    def __init__(self, state_size, action_size, hidden_size=64, lstm_hidden_size=64,
+    def __init__(self, state_size, action_size, hidden_size=32, lstm_hidden_size=128,
                  gamma=0.99, learning_rate=0.001, tau=0.001,
                  epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.999, buffer_size=10000):
         
@@ -245,7 +245,7 @@ def get_action(obs):
     
     if not hasattr(get_action, "agent"):
         get_action.agent = DRQNAgent(STATE_SIZE, ACTION_SIZE)
-        get_action.agent.load("drqn_final.pt")
+        get_action.agent.load("DRQN.pt")
         get_action.hidden_state = get_action.agent.reset_hidden_state()
         # Turn off exploration for testing
         get_action.agent.epsilon = 0.0
@@ -293,5 +293,5 @@ def train(env, agent, num_episodes=500):
 # ======================== MAIN ========================
 if __name__ == "__main__":
     env = SimpleTaxiEnv()
-    agent = DRQNAgent(state_size=20, action_size=6, epsilon_decay=0.999)  # or 0.995, etc.
-    train(env, agent, num_episodes=500)
+    agent = DRQNAgent(state_size=20, action_size=6, epsilon_decay=0.9995)  # or 0.995, etc.
+    train(env, agent, num_episodes=5000)
