@@ -2,7 +2,7 @@ import numpy as np
 import random
 import pickle
 from collections import defaultdict
-from simple_custom_taxi_env import SimpleTaxiEnv
+from simple_custom_taxi_env_ import SimpleTaxiEnv
 from tqdm import *
 
 # 方便對照
@@ -56,8 +56,6 @@ def parse_state(obs, passenger_on):
 
     # 組合成 tuple
     parsed_state = (
-        taxi_row,
-        taxi_col,
         obstacle_north,
         obstacle_south,
         obstacle_east,
@@ -245,7 +243,7 @@ if __name__ == "__main__":
         epsilon_decay=0.99999,
         action_size=6
     )
-    env = SimpleTaxiEnv(5, 5000)
+    env = SimpleTaxiEnv(10, 5000)
     rewards = train(env, agent, num_episodes=100000)
     agent.epsilon = 1.0
         
