@@ -9,7 +9,7 @@ import torch.optim as optim
 from collections import deque
 
 # 假設你的 Taxi 環境自訂檔
-from simple_custom_taxi_env_ import SimpleTaxiEnv
+from simple_custom_taxi_env import SimpleTaxiEnv
 
 # ------------------ 常量：動作編號 ------------------
 ACTION_SOUTH   = 0
