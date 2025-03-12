@@ -248,8 +248,11 @@ if __name__ == "__main__":
         action_size=6
     )
     env = SimpleTaxiEnv(5, 5000)
-   
-    rewards = train(env, agent, num_episodes=100000)
+    for i in range(5,11):
+        env.grid_size = i
+        rewards = train(env, agent, num_episodes=100000)
+        agent.epsilon = 1.0
+        
     print("Training complete! Final epsilon=", agent.epsilon)
     # 開始訓練
     
