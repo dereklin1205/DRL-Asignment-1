@@ -1,23 +1,22 @@
 import numpy as np
 import random
-import pickle
-from collections import defaultdict
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from collections import deque
 from simple_custom_taxi_env import SimpleTaxiEnv
-from tqdm import *
 
-# 方便對照
-ACTION_SOUTH   = 0
-ACTION_NORTH   = 1
-ACTION_EAST    = 2
-ACTION_WEST    = 3
-ACTION_PICKUP  = 4
-ACTION_DROPOFF = 5
-
-# =============== [1] STATE PARSING：加入 passenger_on 維度 =============== #
-def parse_state(obs, passenger_on):
+# ========================= STATE PARSER =========================
+def parse_state(obs):
     """
-    原本 obs(16D):
-        taxi_row, taxi_col,
+    Convert the environment's 16D observation into a 16D representation using (dx, dy).
+    For each station:
+      dx_i = station_i_row - taxi_row
+      dy_i = station_i_col - taxi_col
+    """
+    (
+        taxi_row,
+        taxi_col,
         st0_row, st0_col,
         st1_row, st1_col,
         st2_row, st2_col,
@@ -28,23 +27,8 @@ def parse_state(obs, passenger_on):
         obstacle_west,
         passenger_look,
         destination_look
-
-    我們將最後多加一個 passenger_on (0/1)，讓 Q-Table 區分「是否已載客」.
-    這樣最終 state 會是 17 維(以 tuple 表示)。
-    """
-    (taxi_row,
-     taxi_col,
-     st0_row, st0_col,
-     st1_row, st1_col,
-     st2_row, st2_col,
-     st3_row, st3_col,
-     obstacle_north,
-     obstacle_south,
-     obstacle_east,
-     obstacle_west,
-     passenger_look,
-     destination_look) = obs
-
+    ) = obs
+    
     dx0 = st0_row - taxi_row
     dy0 = st0_col - taxi_col
     dx1 = st1_row - taxi_row
@@ -54,8 +38,8 @@ def parse_state(obs, passenger_on):
     dx3 = st3_row - taxi_row
     dy3 = st3_col - taxi_col
 
-    # 組合成 tuple
-    parsed_state = (
+    state_tuple = (
+        taxi_row, taxi_col,
         dx0, dy0,
         dx1, dy1,
         dx2, dy2,
@@ -65,216 +49,243 @@ def parse_state(obs, passenger_on):
         obstacle_east,
         obstacle_west,
         passenger_look,
-        destination_look,
-        passenger_on  # <--- 關鍵：新增一維
+        destination_look
     )
-    return parsed_state
+    return np.array(state_tuple, dtype=np.float32)
 
-# =============== [2] Q-Learning Agent =============== #
-class QLearningAgent:
-    def __init__(self,
-                 alpha=0.1,
-                 gamma=0.99,
-                 epsilon=1.0,
-                 epsilon_min=0.01,
-                 epsilon_decay=0.995,
-                 action_size=6):
-        self.alpha = alpha
+
+# ========================= REPLAY BUFFER =========================
+class ReplayBuffer:
+    """
+    A simple replay buffer storing (state, action, reward, next_state, done).
+    Uses a deque with fixed capacity.
+    """
+    def __init__(self, capacity):
+        self.buffer = deque(maxlen=capacity)
+
+    def add(self, state, action, reward, next_state, done):
+        self.buffer.append((state, action, reward, next_state, done))
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
+        return (
+            np.array(states, dtype=np.float32),
+            np.array(actions, dtype=np.int64),
+            np.array(rewards, dtype=np.float32),
+            np.array(next_states, dtype=np.float32),
+            np.array(dones, dtype=np.float32)
+        )
+
+    def __len__(self):
+        return len(self.buffer)
+
+
+# ========================= DQN NETWORK =========================
+class DQNNetwork(nn.Module):
+    """
+    A simple feedforward network with two hidden layers.
+    Takes as input the state (16D) and outputs Q-values for each action (6).
+    """
+    def __init__(self, state_dim=16, action_dim=6, hidden_dim=64):
+        super(DQNNetwork, self).__init__()
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        q_values = self.fc3(x)
+        return q_values
+
+
+# ========================= DQN AGENT =========================
+class DQNAgent:
+    """
+    A DQN Agent with:
+    - Q-network (policy_net)
+    - Target network (target_net)
+    - Replay buffer
+    - Epsilon-greedy policy
+    - Train loop with target net soft or hard updates
+    """
+    def __init__(
+        self,
+        state_dim=16,
+        action_dim=6,
+        hidden_dim=64,
+        buffer_size=10000,
+        batch_size=64,
+        gamma=0.99,
+        lr=0.001,
+        tau=0.01,
+        epsilon=1.0,
+        epsilon_min=0.01,
+        epsilon_decay=0.995
+    ):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
         self.gamma = gamma
+        self.tau = tau  # for soft update or can do periodic hard updates
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-        self.action_size = action_size
 
-        # Q-table: dict[ state_tuple ] = np.array of length action_size
-        self.Q = defaultdict(lambda: np.zeros(self.action_size))
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Q-networks
+        self.policy_net = DQNNetwork(state_dim, action_dim, hidden_dim).to(self.device)
+        self.target_net = DQNNetwork(state_dim, action_dim, hidden_dim).to(self.device)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+        self.replay_buffer = ReplayBuffer(self.buffer_size)
 
     def act(self, state):
-        """Epsilon-greedy 選擇行動."""
+        """
+        Epsilon-greedy action selection. state shape: (16,)
+        """
         if random.random() < self.epsilon:
-            return random.randint(0, self.action_size - 1)
+            return random.randint(0, self.action_dim - 1)
         else:
-            return np.argmax(self.Q[state])
+            state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                q_values = self.policy_net(state_t)
+            action = q_values.argmax(dim=1).item()
+            return action
 
-    def learn(self, state, action, reward, next_state, done):
-        """Q-learning update."""
-        old_value = self.Q[state][action]
-        best_next = 0.0 if done else np.max(self.Q[next_state])
-        new_value = old_value + self.alpha * (reward + self.gamma * best_next - old_value) *( 1 - done)
-        self.Q[state][action] = new_value
+    def step(self, state, action, reward, next_state, done):
+        """
+        Store experience in replay buffer.
+        """
+        self.replay_buffer.add(state, action, reward, next_state, done)
 
-    def update_epsilon(self):
-        """每個 episode 結束後，更新 epsilon (探索率)."""
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+    def learn(self):
+        """
+        Sample from replay buffer and update Q-network.
+        Decouple epsilon decay from here, so we do once per episode in training loop.
+        """
+        if len(self.replay_buffer) < self.batch_size:
+            return
 
-    def save(self, filename="q_table.pkl"):
-        """將 Q-table 存起來."""
-        with open(filename, "wb") as f:
-            pickle.dump(dict(self.Q), f)
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
+        
+        states_t = torch.FloatTensor(states).to(self.device)
+        actions_t = torch.LongTensor(actions).to(self.device)
+        rewards_t = torch.FloatTensor(rewards).to(self.device)
+        next_states_t = torch.FloatTensor(next_states).to(self.device)
+        dones_t = torch.FloatTensor(dones).to(self.device)
 
-    def load(self, filename="q_table.pkl"):
-        """從檔案載入 Q-table."""
-        with open(filename, "rb") as f:
-            loaded_dict = pickle.load(f)
-        self.Q = loaded_dict
-        print("Q-table loaded from", filename)
+        # Get current Q
+        q_values = self.policy_net(states_t)
+        current_q = q_values.gather(1, actions_t.unsqueeze(1)).squeeze(1)
 
-# =============== [3] Training function =============== #
-def train(env, agent, num_episodes=1000):
-    """
-    這裡示範用「檢查 reward 是否 >= 0」來判斷 PICKUP/DROPOFF 是否成功。
-    - 一開始 passenger_on=0 (未載客)
-    - 若 action=ACTION_PICKUP (4)，且 reward >= 0 => passenger_on=1
-    - 若 action=ACTION_DROPOFF (5)，且 reward >= 0 => passenger_on=0
-    其餘時間 passenger_on 保持原值。
-    """
-    all_rewards = []
+        # Next Q from target net
+        with torch.no_grad():
+            next_q = self.target_net(next_states_t).max(dim=1)[0]
+            target_q = rewards_t + (1 - dones_t) * self.gamma * next_q
 
-    for episode in range(num_episodes):
-        # =========== Episode 初始化 =========== #
-        passenger_on = 0
-        raw_obs, _ = env.reset()
-        state = parse_state(raw_obs, passenger_on)
-        total_reward = 0.0
-        done = False
+        # Loss = MSE
+        loss = nn.MSELoss()(current_q, target_q)
 
-        while not done:
-            # 選 action
-            action = agent.act(state)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
-            # 與環境互動
-            raw_next_obs, reward, done, info = env.step(action)
+        # Soft update (tau) or Hard update
+        self.soft_update()
 
-            # =======================
-            # 用 reward 判斷 PickUp/DropOff 是否成功
-            # =======================
-            if action == ACTION_PICKUP:
-                # 假設成功 PICKUP => reward >= 0
-                if reward >= 0:
-                    passenger_on = 1
+    def soft_update(self):
+        """
+        Soft update target network:
+        target = tau*policy + (1-tau)*target
+        """
+        for target_param, policy_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
+            target_param.data.copy_(self.tau*policy_param.data + (1.0 - self.tau)*target_param.data)
 
-            elif action == ACTION_DROPOFF:
-                # 假設成功 DROPOFF => reward >= 0
-                if reward >= 0:
-                    passenger_on = 0
+    def save(self, filename="dqn_model.pt"):
+        torch.save({
+            "policy_net": self.policy_net.state_dict(),
+            "target_net": self.target_net.state_dict()
+        }, filename)
 
-            # 計算 next_state
-            next_state = parse_state(raw_next_obs, passenger_on)
+    def load(self, filename="dqn_model.pt"):
+        checkpoint = torch.load(filename, map_location=self.device)
+        self.policy_net.load_state_dict(checkpoint["policy_net"])
+        self.target_net.load_state_dict(checkpoint["target_net"])
 
-            # Q-learning update
-            agent.learn(state, action, reward, next_state, done)
 
-            # 移動到下個 state
-            state = next_state
-            raw_obs = raw_next_obs
-            total_reward += reward
-
-        # episode 結束，更新 epsilon
-        agent.update_epsilon()
-
-        all_rewards.append(total_reward)
-        if (episode + 1) % 100 == 0:
-            avg_100 = np.mean(all_rewards[-100:])
-            print(f"Episode {episode+1}/{num_episodes}, "
-                  f"Epsilon={agent.epsilon:.3f}, "
-                  f"AvgReward(Last100)={avg_100:.2f}")
-
-    # 存下 Q-table
-    agent.save("q_table.pkl")
-    return all_rewards
-
-# =============== [4] 測試時使用 get_action =============== #
+# ========================= GET ACTION FOR TESTING =========================
 def get_action(obs):
     """
-    測試時呼叫 get_action(obs) 取得行動。
-    注意：在這裡我們無法直接用 reward 判斷 PICKUP/DROPOFF 是否成功，
-    因為環境測試時通常不會把 reward 傳進來，只會給下一個 obs。
-    所以維持原本透過「上一個動作+觀測值」去猜測是否成功 PICKUP 或 DROPOFF。
+    This function is called by the environment to get an action from our
+    loaded DQN. We parse the obs (16D), then do a forward pass with epsilon=0.
     """
-    # 用靜態屬性儲存 agent、passenger_on、last_obs、last_action
+    # We'll store the agent as a static attribute so we only load once.
     if not hasattr(get_action, "agent"):
-        # 第一次呼叫 => 初始化
-        get_action.agent = QLearningAgent(epsilon=0.0)  # no exploration in test
-        get_action.agent.load("q_table.pkl")
+        get_action.agent = DQNAgent()
+        get_action.agent.load("dqn_model.pt")
+        get_action.agent.epsilon = 0.0  # No exploration at test time
 
-        get_action.passenger_on = 0  # 尚未載客
-        get_action.last_obs = None
-        get_action.last_action = None
-
-    # 先判斷上一個 action 是 PICKUP 或 DROPOFF，
-    # 並嘗試依環境觀測 obs[13] 判斷是否成功
-    # （或者你可以另外寫邏輯，只要該位置確實是目的地就 passenger_on=0，等等）
-    if get_action.last_obs is not None and get_action.last_action is not None:
-        # 上一次觀測
-        prev_obs = get_action.last_obs
-        prev_action = get_action.last_action
-        
-        if prev_action == ACTION_PICKUP:
-            # 如果上一刻的 obs[13]==1 (旁邊有乘客) => 表示成功 PICKUP
-            if prev_obs[13] == 1 :
-                get_action.passenger_on = 1
-        elif prev_action == ACTION_DROPOFF:
-            # 如果原本載客 => 嘗試放下 => 令 passenger_on=0
-            # 這邊簡單處理，可再根據是否在正確地點做判定
-            if get_action.passenger_on == 1:
-                get_action.passenger_on = 0
-
-    # 現在用 obs + passenger_on 組合當前 state
-    state = parse_state(obs, get_action.passenger_on)
-
-    Q_values = get_action.agent.Q.get(state, None)
-    if Q_values is None:
-        # 若這個狀態不在 Q-table => 隨機
-        action = random.randint(0, 5)
-    else:
-        # 貪心選擇最大 Q-value 的動作
-        action = np.argmax(Q_values)
-
-    # 記住這一刻
-    get_action.last_obs = obs
-    get_action.last_action = action
-
+    # Convert raw 16D obs to final (16,) state
+    state = parse_state(obs)
+    action = get_action.agent.act(state)
     return action
 
-# =============== [5] MAIN 訓練/測試範例 (可自行調整) =============== #
+
+# ========================= TRAIN FUNCTION =========================
+def train(env, agent, num_episodes=500):
+    """
+    Train the DQN over multiple episodes. Decay epsilon once per episode.
+    """
+    all_rewards = []
+    for ep in range(num_episodes):
+        raw_obs, _ = env.reset()
+        state = parse_state(raw_obs)
+        done = False
+        total_reward = 0.0
+
+        while not done:
+            action = agent.act(state)
+            raw_next_obs, reward, done, _ = env.step(action)
+            next_state = parse_state(raw_next_obs)
+
+            agent.step(state, action, reward, next_state, done)
+            agent.learn()
+
+            state = next_state
+            total_reward += reward
+
+        # Decay epsilon once per episode
+        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+
+        all_rewards.append(total_reward)
+        if (ep + 1) % 50 == 0:
+            avg_50 = np.mean(all_rewards[-50:])
+            print(f"Episode {ep+1}/{num_episodes} | Epsilon={agent.epsilon:.3f} | AvgReward(Last50)={avg_50:.2f}")
+
+    agent.save("dqn_model.pt")
+    return all_rewards
+
+
+# ========================= MAIN =========================
 if __name__ == "__main__":
-    ##222
-    agent = QLearningAgent(
-        alpha=0.1,
+    env = SimpleTaxiEnv(5,5000)
+    agent = DQNAgent(
+        state_dim=16,   # (taxi_row, taxi_col, dx0,dy0, ..., passenger_look, destination_look)
+        action_dim=6,
+        hidden_dim=64,
+        buffer_size=10000,
+        batch_size=64,
         gamma=0.99,
+        lr=0.001,
+        tau=0.01,
         epsilon=1.0,
         epsilon_min=0.01,
-        epsilon_decay=0.99999,
-        action_size=6
+        epsilon_decay=0.99999
     )
-    env = SimpleTaxiEnv(5, 5000)
-    for i in range(5,11):
-        env.grid_size = i
-        rewards = train(env, agent, num_episodes=100000)
-        agent.epsilon = 1.0
-        
-    print("Training complete! Final epsilon=", agent.epsilon)
-    # 開始訓練
-    
-
-    # 你也可以在這裡測試看看 agent 的表現
-    # obs, _ = env.reset()
-    # passenger_on = 0
-    # done = False
-    # total_r = 0
-    # while not done:
-    #     state = parse_state(obs, passenger_on)
-    #     act_ = agent.act(state)
-    #     next_obs, r, done, info = env.step(act_)
-    #
-    #     # 用 reward 判斷 PICKUP/DROPOFF
-    #     if act_ == ACTION_PICKUP and r >= 0:
-    #         passenger_on = 1
-    #     elif act_ == ACTION_DROPOFF and r >= 0:
-    #         passenger_on = 0
-    #
-    #     total_r += r
-    #     obs = next_obs
-    #     env.render()  # 看看走向
-    #
-    # print("Test run total reward:", total_r)
+    train(env, agent, num_episodes=5000)
