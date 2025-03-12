@@ -2,7 +2,7 @@ import numpy as np
 import random
 import pickle
 from collections import defaultdict
-from simple_custom_taxi_env_ import SimpleTaxiEnv
+from simple_custom_taxi_env import SimpleTaxiEnv
 from tqdm import *
 
 # 方便對照
