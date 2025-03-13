@@ -94,8 +94,9 @@ class QLearningAgent:
         """Q-learning update."""
         old_value = self.Q[state][action]
         best_next = 0.0 if done else np.max(self.Q[next_state])
-        new_value = old_value + self.alpha * (reward + self.gamma * best_next - old_value) *( 1 - done)
-        self.Q[state][action] = new_value
+        td_target = reward + self.gamma * best_next* (not done)
+        td_error = td_target - old_value
+        self.Q[state][action] += self.alpha * td_error
 
     def update_epsilon(self):
         """每個 episode 結束後，更新 epsilon (探索率)."""
@@ -230,11 +231,11 @@ if __name__ == "__main__":
         gamma=0.99,
         epsilon=1.0,
         epsilon_min=0.01,
-        epsilon_decay=0.99995,
+        epsilon_decay=0.999,
         action_size=6
     )
     env = SimpleTaxiEnv(10, 5000)
-    rewards = train(env, agent, num_episodes=100000)
+    rewards = train(env, agent, num_episodes=10000)
         
     print("Training complete! Final epsilon=", agent.epsilon)
     # 開始訓練
