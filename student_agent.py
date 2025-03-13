@@ -60,8 +60,6 @@ def parse_state(obs, passenger_on):
         obstacle_south,
         obstacle_east,
         obstacle_west,
-        passenger_look,
-        destination_look,
         # passenger_on  # <--- 關鍵：新增一維
     )
     return parsed_state
@@ -144,15 +142,7 @@ def train(env, agent, num_episodes=1000):
             # =======================
             # 用 reward 判斷 PickUp/DropOff 是否成功
             # =======================
-            if action == ACTION_PICKUP:
-                # 假設成功 PICKUP => reward >= 0
-                if reward >= 0:
-                    passenger_on = 1
-
-            elif action == ACTION_DROPOFF:
-                # 假設成功 DROPOFF => reward >= 0
-                if reward >= 0:
-                    passenger_on = 0
+            
 
             # 計算 next_state
             next_state = parse_state(raw_next_obs, passenger_on)
@@ -240,11 +230,11 @@ if __name__ == "__main__":
         gamma=0.99,
         epsilon=1.0,
         epsilon_min=0.01,
-        epsilon_decay=0.999995,
+        epsilon_decay=0.99995,
         action_size=6
     )
     env = SimpleTaxiEnv(10, 5000)
-    rewards = train(env, agent, num_episodes=400000)
+    rewards = train(env, agent, num_episodes=100000)
         
     print("Training complete! Final epsilon=", agent.epsilon)
     # 開始訓練
