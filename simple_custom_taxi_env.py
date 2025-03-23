@@ -22,7 +22,6 @@ class SimpleTaxiEnv():
         self.fuel_limit = fuel_limit
         self.current_fuel = fuel_limit
         self.passenger_picked_up = False
-<<<<<<< HEAD
         self.stations = []
         self.station = ()
         for i in range(4):
@@ -31,12 +30,6 @@ class SimpleTaxiEnv():
                 self.station = (random.randint(0,self.grid_size-1),random.randint(0,self.grid_size-1))
                 self.stations.append(self.station)    
         self.passenger_loc = None
-=======
-        
-        self.stations = [(0, 0), (0, self.grid_size - 1), (self.grid_size - 1, 0), (self.grid_size - 1, self.grid_size - 1)]
-        self.passenger_loc = None
-       
->>>>>>> origin/HEAD
         self.obstacles = set()  # No obstacles in simple version
         self.destination = None
 
@@ -44,7 +37,6 @@ class SimpleTaxiEnv():
         """Reset the environment, ensuring Taxi, passenger, and destination are not overlapping obstacles"""
         self.current_fuel = self.fuel_limit
         self.passenger_picked_up = False
-<<<<<<< HEAD
         self.grid_size = random.randint(5,11)
         self.stations = []
         self.station = ()
@@ -80,17 +72,6 @@ class SimpleTaxiEnv():
 
         self.taxi_pos = random.choice(available_positions)
         
-=======
-        
-
-        available_positions = [
-            (x, y) for x in range(self.grid_size) for y in range(self.grid_size)
-            if (x, y) not in self.stations and (x, y) not in self.obstacles
-        ]
-
-        self.taxi_pos = random.choice(available_positions)
-        
->>>>>>> origin/HEAD
         self.passenger_loc = random.choice([pos for pos in self.stations])
         
         
@@ -116,18 +97,13 @@ class SimpleTaxiEnv():
         
         if action in [0, 1, 2, 3]:  # Only movement actions should be checked
             if (next_row, next_col) in self.obstacles or not (0 <= next_row < self.grid_size and 0 <= next_col < self.grid_size):
-<<<<<<< HEAD
                 reward -=9
-=======
-                reward -=5
->>>>>>> origin/HEAD
             else:
                 self.taxi_pos = (next_row, next_col)
                 if self.passenger_picked_up:
                     self.passenger_loc = self.taxi_pos
         else:
             if action == 4:  # PICKUP
-<<<<<<< HEAD
                 if self.taxi_pos == self.passenger_loc and self.passenger_picked_up == False:
                     self.passenger_picked_up = True
                     self.passenger_loc = self.taxi_pos  
@@ -144,25 +120,6 @@ class SimpleTaxiEnv():
                     self.passenger_loc = self.taxi_pos
                 else:
                     reward -= 18
-=======
-                if self.taxi_pos == self.passenger_loc:
-                    self.passenger_picked_up = True
-                    self.passenger_loc = self.taxi_pos  
-                else:
-                    reward = -10  
-            elif action == 5:  # DROPOFF
-                if self.passenger_picked_up:
-                    if self.taxi_pos == self.destination:
-                        reward += 50
-                        return self.get_state(), reward -0.1, True, {}
-                    else:
-                        reward -=10
-                    self.passenger_picked_up = False
-                    self.passenger_loc = self.taxi_pos
-                else:
-                    reward -=10
-                    
->>>>>>> origin/HEAD
         reward -= 0.1  
 
         self.current_fuel -= 1
@@ -272,10 +229,6 @@ def run_agent(agent_file, env_config, render=False):
         
         
         action = student_agent.get_action(obs)
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/HEAD
         obs, reward, done, _ = env.step(action)
         print('obs=',obs)
         total_reward += reward
