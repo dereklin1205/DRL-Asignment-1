@@ -658,6 +658,7 @@ def get_action(obs):
         get_action.passenger_station = []
         get_action.passenger_place = None
         get_action.queue = []
+        get_action.actions =[]
     
     # Update based on previous action
     if get_action.last_state is not None and get_action.last_action is not None:
@@ -714,7 +715,9 @@ def get_action(obs):
     # Remember current state and action
     get_action.last_state = state
     get_action.last_action = action
-    
+    get_action.actions.append(action)
+    if len(get_action.actions) == 5000:
+        print(get_action.actions)
     return action
 
 if __name__ == "__main__":
