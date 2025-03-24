@@ -105,19 +105,24 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
             if len(passenger_station) >= 1:
                 goal = (passenger_station[0][0] - taxi_row, passenger_station[0][1] - taxi_col)
         else:
-            if unvisited:
+            if len(unvisited)>0:
                 goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
-            else:
+            elif len(visited)>0:
                 goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
+            else:
+                goal = (st0_row - taxi_row, st0_col - taxi_col)
+                
     else:
         if destionation_station:
             if len(destionation_station) >= 1:
                 goal = (destionation_station[0][0] - taxi_row, destionation_station[0][1] - taxi_col)
         else:
-            if unvisited:
+            if len(unvisited)>0:
                 goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
-            else:
+            elif len(visited)>0:
                 goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
+            else:
+                goal = (st0_row - taxi_row, st0_col - taxi_col)
     
     # Update destination stations that are not the destination
     if dx0 == 0 and dy0 == 0 and not destination_look:
