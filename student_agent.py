@@ -693,8 +693,17 @@ def get_action(obs):
         if len(get_action.queue) == 12:
         ## detected 4 cycle or 2 cycle
             if get_action.queue[0] == get_action.queue[2] == get_action.queue[4] == get_action.queue[6] == get_action.queue[8] == get_action.queue[10]  and get_action.queue[1] == get_action.queue[3] == get_action.queue[5] == get_action.queue[7] == get_action.queue[9]== get_action.queue[11]:
-                action = random.randint(0, 3)
-
+                while True:
+                    action = random.randint(0, 3)
+                    if action != get_action.queue[0] and action != get_action.queue[1]:
+                        break
+        ## detected 4 cycle
+            elif get_action.queue[0] == get_action.queue[4] == get_action.queue[8] == get_action.queue[12] and get_action.queue[1] == get_action.queue[5] == get_action.queue[9] == get_action.queue[13]and get_action.queue[2] == get_action.queue[6] == get_action.queue[10] and get_action.queue[3] == get_action.queue[7] == get_action.queue[11]:
+                while True:
+                    action = random.randint(0, 3)
+                    if action != get_action.queue[8]:
+                        break
+        
         
         
         if len(get_action.queue)<12:
@@ -760,7 +769,7 @@ if __name__ == "__main__":
     # Train agent
     print("Starting training...")
     try:
-        history = train(env, agent, num_episodes=30000, difficulty="easy")
+        history = train(env, agent, num_episodes=100000, difficulty="easy")
         
         # Second round of training with reset epsilon
         agent.epsilon = 1.0
