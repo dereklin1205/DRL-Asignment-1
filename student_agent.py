@@ -649,10 +649,7 @@ def get_action(obs):
         get_action.visited, get_action.unvisited, get_action.destionation_station, 
         get_action.passenger_station, get_action.passenger_place
     )
-    if len(get_action.queue)<11:
-        get_action.queue.append(action)
-    elif len(get_action.queue)==10:
-        get_action.queue.pop(0)
+    
     
     # Get action from Q-table
     Q_values = get_action.agent.Q.get(state, None)
@@ -660,6 +657,10 @@ def get_action(obs):
         action = random.randint(0, 5)
     else:
         action = np.argmax(Q_values)
+        if len(get_action.queue)<11:
+            get_action.queue.append(action)
+        elif len(get_action.queue)==10:
+            get_action.queue.pop(0)
         count = 0
         for action_q in get_action.queue:
             if action == action_q:
