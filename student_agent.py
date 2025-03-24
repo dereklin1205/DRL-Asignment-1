@@ -156,6 +156,25 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
             passenger_station.remove((st3_row, st3_col))
     
     # Use known passenger place if available
+    if dx0 ==0 and dy0 ==0 and passenger_place is None and passenger_look:
+        passenger_place = (taxi_row, taxi_col)
+    if dx1 ==0 and dy1 ==0 and passenger_place is None and passenger_look:
+        passenger_place = (taxi_row, taxi_col)
+    if dx2 ==0 and dy2 ==0 and passenger_place is None and passenger_look:
+        passenger_place = (taxi_row, taxi_col)
+    if dx3 ==0 and dy3 ==0 and passenger_place is None and passenger_look:
+        passenger_place = (taxi_row, taxi_col)
+    
+    if dx3 ==0 and dy3 ==0 and destionation_station is None and destination_look:
+        destionation_station = [(st3_row, st3_col)]
+    if dx2 ==0 and dy2 ==0 and destionation_station is None and destination_look:
+        destionation_station = [(st2_row, st2_col)]
+    if dx1 ==0 and dy1 ==0 and destionation_station is None and destination_look:
+        destionation_station = [(st1_row, st1_col)]
+    if dx0 ==0 and dy0 ==0 and destionation_station is None and destination_look:
+        destionation_station = [(st0_row, st0_col)]
+    
+    
     if not passenger_on and passenger_place is not None:
         goal = (passenger_place[0] - taxi_row, passenger_place[1] - taxi_col)
     if len(visited)==3 and not destionation_station:
@@ -681,7 +700,7 @@ def get_action(obs):
             if action == action_q:
                 count +=1
         if len(get_action.queue) >= 10:
-            if count > len(get_action.queue)//2:
+            if count > len(get_action.queue)//3:
                 ## pick second large Q value action
                 action = np.argsort(Q_values)[-2]
         if len(get_action.queue)<11:
@@ -842,4 +861,4 @@ if __name__ == "__main__":
         print("\nTraining interrupted. Saving model...")
         agent.save("q_table_interrupted.pkl")
         print("Model saved to 'q_table_interrupted.pkl'")
-    # Get
+    # Get action function for testing
