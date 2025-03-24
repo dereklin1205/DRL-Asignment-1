@@ -413,15 +413,7 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
             if action == ACTION_DROPOFF and passenger_on:
                 passenger_on = 0
                 passenger_place = (raw_obs[0], raw_obs[1])
-            if len(queue) == 10:
-                queue.pop(0)
-            if len(queue) == 10:
-                count = 0
-                for actions in queue:
-                    if actions == action:
-                        count +=1
-                if count>5:
-                    action = random.randint(0, 5)
+
             # Take action in environment
             raw_next_obs, reward, done, info = env.step(action)
             episode_tracking['rewards'].append(reward)
@@ -443,10 +435,9 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
                 batch_invalid_dropoffs += 1
                 
             # Successful dropoff (completion)
-            if done and action == ACTION_DROPOFF and reward > 0:
+            if done and action == ACTION_DROPOFF and reward > 0 and info.get("success", False):
                 successful_dropoff_step = steps
                 episode_delivery = True
-            
             # Additional logic for loop prevention
             
             
@@ -458,10 +449,10 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
             )
             
             # Reward shaping based on movement toward goal
-            if (abs(next_state[0][0]) + abs(next_state[0][1])) < (abs(state[0][0]) + abs(state[0][1])):
-                reward += 2
-            else:
-                reward -= 2
+            # if (abs(next_state[0][0]) + abs(next_state[0][1])) < (abs(state[0][0]) + abs(state[0][1])):
+            #     reward += 2
+            # else:
+            #     reward -= 2
             
             # Track successful pickups
             if info.get("pick_up_passenger", False):
@@ -699,13 +690,16 @@ def get_action(obs):
         for action_q in get_action.queue:
             if action == action_q:
                 count +=1
-        if len(get_action.queue) >= 10:
-            if count > len(get_action.queue)//3:
-                ## pick second large Q value action
-                action = np.argsort(Q_values)[-2]
-        if len(get_action.queue)<11:
+        if len(get_action.queue) == 10:
+        ## detected 4 cycle or 2 cycle
+            if get_action.queue[0] == get_action.queue[2] == get_action.queue[4] == get_action.queue[6] == get_action.queue[8] == get_action.queue[10]  and get_action.queue[1] == get_action.queue[3] == get_action.queue[5] == get_action.queue[7] == get_action.queue[9]== get_action.queue[11]:
+                action = random.randint(0, 3)
+
+        
+        
+        if len(get_action.queue)<12:
             get_action.queue.append(action)
-        elif len(get_action.queue)==11:
+        elif len(get_action.queue)==12:
             get_action.queue.pop(0)
     
     # Remember current state and action
@@ -717,8 +711,8 @@ def get_action(obs):
 if __name__ == "__main__":
     # Create environment and agent
     agent = QLearningAgent(
-        alpha=0.1,
-        gamma=0.99,
+        alpha=0.05,
+        gamma=0.8,
         epsilon=1.0,
         epsilon_min=0.01,
         epsilon_decay=0.99995,
@@ -770,8 +764,9 @@ if __name__ == "__main__":
         
         # Second round of training with reset epsilon
         agent.epsilon = 1.0
+        agent.epsilon_decay = 0.99997
         print("\nStarting second round of training...")
-        history = train(env, agent, num_episodes=70000, difficulty="normal")
+        history = train(env, agent, num_episodes=100000, difficulty="normal")
         
         print("Training complete! Final epsilon =", agent.epsilon)
         
