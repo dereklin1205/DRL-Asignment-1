@@ -662,7 +662,7 @@ def get_action(obs):
         if len(get_action.queue) == 10:
             if count > 5:
                 ## pick second large Q value action
-                action = np.argsort(Q_values)[-2]s
+                action = np.argsort(Q_values)[-2]
     
     # Remember current state and action
     get_action.last_state = state
