@@ -4,6 +4,8 @@ import importlib.util
 import time
 from IPython.display import clear_output
 import random
+from collections import defaultdict, deque
+
 # This environment allows you to verify whether your program runs correctly during testing, 
 # as it follows the same observation format from `env.reset()` and `env.step()`. 
 # However, keep in mind that this is just a simplified environment. 
@@ -14,7 +16,7 @@ import random
 
 
 class SimpleTaxiEnv():
-    def __init__(self, grid_size=5, fuel_limit=50):
+    def __init__(self, grid_size=5, fuel_limit=50, difficulty="easy"):
         """
         Custom Taxi environment supporting different grid sizes.
         """
@@ -22,62 +24,112 @@ class SimpleTaxiEnv():
         self.fuel_limit = fuel_limit
         self.current_fuel = fuel_limit
         self.passenger_picked_up = False
-        self.stations = []
-        self.station = ()
-        for i in range(4):
-            self.station = (random.randint(0,self.grid_size-1),random.randint(0,self.grid_size-1))
-            while self.station not in self.stations:
-                self.station = (random.randint(0,self.grid_size-1),random.randint(0,self.grid_size-1))
-                self.stations.append(self.station)    
+        self.stations = [] 
         self.passenger_loc = None
         self.obstacles = set()  # No obstacles in simple version
         self.destination = None
+        self.passenger_ever_picked_up = False
+        self.flag  = False
+        self.difficulty = difficulty
+    def is_valid(self):
+        return self.is_reachable(self.taxi_pos, self.passenger_loc) and \
+            self.is_reachable(self.passenger_loc, self.destination) and self.is_reachable(self.taxi_pos, self.stations[0]) and self.is_reachable(self.taxi_pos, self.stations[1]) and self.is_reachable(self.taxi_pos, self.stations[2]) and self.is_reachable(self.taxi_pos, self.stations[3])
 
-    def reset(self):
-        """Reset the environment, ensuring Taxi, passenger, and destination are not overlapping obstacles"""
-        self.current_fuel = self.fuel_limit
-        self.passenger_picked_up = False
-        self.grid_size = random.randint(5,11)
-        self.stations = []
-        self.station = ()
-        self.obstacles = set()
-        for i in range(4):
-            self.station = (random.randint(0,self.grid_size-1),random.randint(0,self.grid_size-1))
-            while len(self.stations) <4:
-                self.station = (random.randint(0,self.grid_size-1),random.randint(0,self.grid_size-1))
-                flag = False
-                for i in range(len(self.stations)):
-                    if self.station == self.stations[i]:
-                        flag = True
-                        break
-                if not flag:
-                    self.stations.append(self.station)
-                    break
-            # print(self.station)
-        # print(self.stations)
-        for i in range(self.grid_size):
-            for j in range(self.grid_size):
-                if (i,j) not in self.stations and random.random() < 0.1:
-                    for station in self.stations:
-                        self.obstacles.add((i,j))
-                        (x,y) = station
-                        if (x+1,y)in self.obstacles and  (x-1,y) in self.obstacles and (x,y+1) in self.obstacles and  (x,y-1) in self.obstacles:
-                            self.obstacles.remove((i,j))
-                            break
-        # print(len(self.obstacles))
+    def is_reachable(self, p, q):
+        """
+        Check if there is a path from p to q using BFS
+        
+        Args:
+            p: (row, col) tuple for start position
+            q: (row, col) tuple for end position
+            
+        Returns:
+            bool: True if path exists, False otherwise
+        """
+        if p == q:
+            return True
+        
+        # Directions: up, right, down, left
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        
+        # BFS for path finding
+        queue = [p]
+        visited = set()
+        
+        while queue:
+            x, y = queue.pop(0)
+            
+            if (x, y) == q:
+                return True
+            
+            if (x, y) in visited:
+                continue
+                
+            visited.add((x, y))
+            
+            # Try all four directions
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < self.grid_size and 
+                    0 <= ny < self.grid_size and 
+                    (nx, ny) not in self.obstacles):
+                    queue.append((nx, ny))
+        
+        # If we've exhausted all possibilities without finding the end
+        return False
+
+    def reset(self, difficulty="easy"):
+        self.difficulty = difficulty 
+        self.grid_size = random.choice([5, 6, 7, 8,9,10])
+        self.passenger_ever_picked_up = False
         available_positions = [
             (x, y) for x in range(self.grid_size) for y in range(self.grid_size)
-            if (x, y) not in self.stations and (x, y) not in self.obstacles
         ]
+        while True:
+            self.stations = []
+            for _ in range(4):
+                x, y = random.choice(available_positions)
+                self.stations.append((x, y))
+                for dx, dy in [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)]:
+                    if (x + dx, y + dy) in available_positions:
+                        available_positions.remove((x + dx, y + dy))
 
-        self.taxi_pos = random.choice(available_positions)
-        
-        self.passenger_loc = random.choice([pos for pos in self.stations])
-        
-        
-        possible_destinations = [s for s in self.stations if s != self.passenger_loc]
-        self.destination = random.choice(possible_destinations)
-        
+            # self.stations = [(0, 0), (0, self.grid_size - 1), (self.grid_size - 1, 0), (self.grid_size - 1, self.grid_size - 1)]
+
+            self.current_fuel = self.fuel_limit
+            self.passenger_picked_up = False
+
+            available_positions = [
+                (x, y)
+                for x in range(self.grid_size)
+                for y in range(self.grid_size)
+                if (x, y) not in self.stations
+            ]
+
+            self.taxi_pos = random.choice(available_positions)
+
+            self.passenger_loc = random.choice(self.stations)
+
+            self.destination = random.choice([s for s in self.stations
+                                            if s != self.passenger_loc])
+
+            available_positions = [
+                (x, y)
+                for x in range(self.grid_size)
+                for y in range(self.grid_size)
+                if (x, y) not in self.stations and (x, y) != self.taxi_pos
+            ]
+            self.n_obstacle = int((self.grid_size**2*np.random.uniform(0.2,0.3)))
+            if self.difficulty == "easy":
+                self.n_obstacle = int((self.grid_size**2*np.random.uniform(0,0.1)))
+            else:
+                self.n_obstacle = int((self.grid_size**2*np.random.uniform(0.2,0.3)))
+
+            self.obstacles = set(random.sample(available_positions, self.n_obstacle))
+
+            if self.is_valid():
+                break
+
         return self.get_state(), {}
 
     def step(self, action):
@@ -97,7 +149,7 @@ class SimpleTaxiEnv():
         
         if action in [0, 1, 2, 3]:  # Only movement actions should be checked
             if (next_row, next_col) in self.obstacles or not (0 <= next_row < self.grid_size and 0 <= next_col < self.grid_size):
-                reward -=5
+                reward -=20
             else:
                 self.taxi_pos = (next_row, next_col)
                 if self.passenger_picked_up:
@@ -106,25 +158,31 @@ class SimpleTaxiEnv():
             if action == 4:  # PICKUP
                 if self.taxi_pos == self.passenger_loc and self.passenger_picked_up == False:
                     self.passenger_picked_up = True
-                    self.passenger_loc = self.taxi_pos  
+                    self.passenger_loc = self.taxi_pos
+                    if not self.passenger_ever_picked_up:
+                        reward += 50
+                    self.passenger_ever_picked_up = True  
                 else:
-                    reward = -10
+                    reward = -100
             elif action == 5:  # DROPOFF
                 if self.passenger_picked_up:
                     if self.taxi_pos == self.destination:
-                        reward += 50
-                        return self.get_state(), reward -0.1, True, {}
-                    reward -=10
+                        reward += 200
+                        return self.get_state(), reward -0.1, True, {"success": True,"pick_up_passenger": True}
+                    reward -=1000
                     self.passenger_picked_up = False
                     self.passenger_loc = self.taxi_pos
                 else:
-                    reward -= 10
-        reward -= 0.1  
+                    reward -= 1000
+        reward -= 1  
 
         self.current_fuel -= 1
         if self.current_fuel <= 0:
-            return self.get_state(), reward -10, True, {}
+            return self.get_state(), reward -1, True, {}
 
+        if self.passenger_ever_picked_up == True and self.flag == False:
+            self.flag = True
+            return self.get_state(), reward, False, {"pick_up_passenger": True}
         
 
         return self.get_state(), reward, False, {}
