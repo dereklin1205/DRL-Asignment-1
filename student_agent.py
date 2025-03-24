@@ -1,367 +1,806 @@
-from taxi_model import EnvironmentProcessor, ActorNetwork
-import torch
-import os
-import random
 import numpy as np
-from collections import deque, Counter
+import random
+import pickle
+from collections import defaultdict
+from simple_custom_taxi_env import SimpleTaxiEnv
+from tqdm import *
 
-class TaxiAgent:
-    def __init__(self, model_path='dqn_agent.pth'):
-        """
-        Initialize the Taxi Agent with a pre-trained model
+# Action constants
+ACTION_SOUTH = 0
+ACTION_NORTH = 1
+ACTION_EAST = 2
+ACTION_WEST = 3
+ACTION_PICKUP = 4
+ACTION_DROPOFF = 5
+
+# Global variables
+visited = []
+unvisited = []
+destionation_station = []
+passenger_station = []
+passenger_place = None
+
+def find_nearest_station(taxi_row, taxi_col, stations):
+    min_distance = 1000
+    nearest_station = []
+    for station in stations:
+        distance = abs(taxi_row - station[0]) + abs(taxi_col - station[1])
+        if distance < min_distance:
+            min_distance = distance
+    # May have multiple nearest stations, add all of them
+    for station in stations:
+        distance = abs(taxi_row - station[0]) + abs(taxi_col - station[1])
+        if distance == min_distance:
+            nearest_station.append(station)
+    return nearest_station
+
+def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destionation_station, passenger_station, passenger_place):
+    """Parse the state from observation"""
+    (taxi_row,
+     taxi_col,
+     st0_row, st0_col,
+     st1_row, st1_col,
+     st2_row, st2_col,
+     st3_row, st3_col,
+     obstacle_north,
+     obstacle_south,
+     obstacle_east,
+     obstacle_west,
+     passenger_look,
+     destination_look) = obs
+    
+    goal = ()
+    dx0 = st0_row - taxi_row
+    dy0 = st0_col - taxi_col
+    dx1 = st1_row - taxi_row
+    dy1 = st1_col - taxi_col
+    dx2 = st2_row - taxi_row
+    dy2 = st2_col - taxi_col
+    dx3 = st3_row - taxi_row
+    dy3 = st3_col - taxi_col
+    
+    if len(visited) == 4:
+        visited = []
+        unvisited = [(st0_row, st0_col), (st1_row, st1_col), (st2_row, st2_col), (st3_row, st3_col)]
+    
+    # Update passenger and destination stations
+    if passenger_look:
+        if passenger_station and len(passenger_station)>1:
+            passenger_station = find_nearest_station(taxi_row, taxi_col, [(st0_row, st0_col), (st1_row, st1_col), (st2_row, st2_col), (st3_row, st3_col)])
+        else:
+            if not passenger_station:
+                passenger_station = find_nearest_station(taxi_row, taxi_col, [(st0_row, st0_col), (st1_row, st1_col), (st2_row, st2_col), (st3_row, st3_col)])
+    if destination_look:
+        if destionation_station and len(destionation_station)>1:
+            destionation_station = find_nearest_station(taxi_row, taxi_col, [(st0_row, st0_col), (st1_row, st1_col), (st2_row, st2_col), (st3_row, st3_col)])
+        else:
+            if not destionation_station:
+                destionation_station = find_nearest_station(taxi_row, taxi_col, [(st0_row, st0_col), (st1_row, st1_col), (st2_row, st2_col), (st3_row, st3_col)])   
+    
+    # Update visited and unvisited stations
+    if dx0 == 0 and dy0 == 0:
+        if (st0_row, st0_col) not in visited:
+            visited.append((st0_row, st0_col))
+        if (st0_row, st0_col) in unvisited:
+            unvisited.remove((st0_row, st0_col))
+    if dx1 == 0 and dy1 == 0:
+        if (st1_row, st1_col) not in visited:
+            visited.append((st1_row, st1_col))
+        if (st1_row, st1_col) in unvisited:
+            unvisited.remove((st1_row, st1_col))
+    if dx2 == 0 and dy2 == 0:
+        if (st2_row, st2_col) not in visited:
+            visited.append((st2_row, st2_col))
+        if (st2_row, st2_col) in unvisited:
+            unvisited.remove((st2_row, st2_col))
+    if dx3 == 0 and dy3 == 0:
+        if (st3_row, st3_col) not in visited:
+            visited.append((st3_row, st3_col))
+        if (st3_row, st3_col) in unvisited:
+            unvisited.remove((st3_row, st3_col))
+    
+    # Determine goal based on passenger status
+    if passenger_on == 0:
+        if passenger_station:
+            if len(passenger_station) >= 1:
+                goal = (passenger_station[0][0] - taxi_row, passenger_station[0][1] - taxi_col)
+        else:
+            if unvisited:
+                goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
+            else:
+                goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
+    else:
+        if destionation_station:
+            if len(destionation_station) >= 1:
+                goal = (destionation_station[0][0] - taxi_row, destionation_station[0][1] - taxi_col)
+        else:
+            if unvisited:
+                goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
+            else:
+                goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
+    
+    # Update destination stations that are not the destination
+    if dx0 == 0 and dy0 == 0 and not destination_look:
+        if (st0_row, st0_col) in destionation_station:
+            destionation_station.remove((st0_row, st0_col))
+    if dx1 == 0 and dy1 == 0 and not destination_look:
+        if (st1_row, st1_col) in destionation_station:
+            destionation_station.remove((st1_row, st1_col))
+    if dx2 == 0 and dy2 == 0 and not destination_look:
+        if (st2_row, st2_col) in destionation_station:
+            destionation_station.remove((st2_row, st2_col))
+    if dx3 == 0 and dy3 == 0 and not destination_look:
+        if (st3_row, st3_col) in destionation_station:
+            destionation_station.remove((st3_row, st3_col))
+    
+    # Update passenger stations that are not the passenger location
+    if dx0 == 0 and dy0 == 0 and not passenger_look:
+        if (st0_row, st0_col) in passenger_station:
+            passenger_station.remove((st0_row, st0_col))
+    if dx1 == 0 and dy1 == 0 and not passenger_look:
+        if (st1_row, st1_col) in passenger_station:
+            passenger_station.remove((st1_row, st1_col))
+    if dx2 == 0 and dy2 == 0 and not passenger_look:
+        if (st2_row, st2_col) in passenger_station:
+            passenger_station.remove((st2_row, st2_col))
+    if dx3 == 0 and dy3 == 0 and not passenger_look:
+        if (st3_row, st3_col) in passenger_station:
+            passenger_station.remove((st3_row, st3_col))
+    
+    # Use known passenger place if available
+    if not passenger_on and passenger_place is not None:
+        goal = (passenger_place[0] - taxi_row, passenger_place[1] - taxi_col)
+    
+    parsed_state = (
+        goal,
+        obstacle_north,
+        obstacle_south,
+        obstacle_east,
+        obstacle_west,
+        passenger_look,
+        destination_look,
+        passenger_on
+    )
+    
+    return parsed_state, visited, unvisited, destionation_station, passenger_station, passenger_place
+
+class QLearningAgent:
+    def __init__(self,
+                 alpha=0.1,
+                 gamma=0.99,
+                 epsilon=1.0,
+                 epsilon_min=0.01,
+                 epsilon_decay=0.995,
+                 action_size=6):
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.epsilon_min = epsilon_min
+        self.epsilon_decay = epsilon_decay
+        self.action_size = action_size
+
+        # Q-table: dict[ state_tuple ] = np.array of length action_size
+        self.Q = defaultdict(lambda: np.zeros(self.action_size))
+
+    def act(self, state):
+        """Epsilon-greedy action selection"""
+        if random.random() < self.epsilon:
+            return random.randint(0, self.action_size - 1)
+        else:
+            return np.argmax(self.Q[state])
+
+    def learn(self, state, action, reward, next_state, done):
+        """Q-learning update"""
+        old_value = self.Q[state][action]
+        best_next = 0.0 if done else np.max(self.Q[next_state])
+        td_target = reward + self.gamma * best_next * (not done)
+        td_error = td_target - old_value
+        self.Q[state][action] += self.alpha * td_error
+
+    def update_epsilon(self):
+        """Update exploration rate"""
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+    def save(self, filename="q_table.pkl"):
+        """Save Q-table to file"""
+        with open(filename, "wb") as f:
+            pickle.dump(dict(self.Q), f)
+
+    def load(self, filename="q_table.pkl"):
+        """Load Q-table from file"""
+        with open(filename, "rb") as f:
+            loaded_dict = pickle.load(f)
+        self.Q = loaded_dict
+        print("Q-table loaded from", filename)
+
+def print_last_episode_info(episode_info):
+    """Print detailed information about the last episode"""
+    print("\n==== Last Episode Details ====")
+    print(f"Episode Length: {len(episode_info['actions'])} steps")
+    print(f"Total Reward: {episode_info['total_reward']:.2f}")
+    print(f"Passenger Picked Up: {'Yes' if episode_info['passenger_picked_up'] else 'No'}")
+    print(f"Destination Reached: {'Yes' if episode_info['destination_reached'] else 'No'}")
+    
+    # Print debug info
+    if 'debug_info' in episode_info:
+        debug = episode_info['debug_info']
+        print("\nDebug Information:")
+        print(f"Wall Collisions: {debug['wall_hits']}")
+        print(f"Invalid Pickups: {debug['invalid_pickups']}")
+        print(f"Invalid Dropoffs: {debug['invalid_dropoffs']}")
         
-        Args:
-            model_path: Path to the saved model weights
-        """
-        self.env_processor = EnvironmentProcessor()
+        if debug['first_pickup_step'] is not None:
+            print(f"First Pickup At: Step {debug['first_pickup_step']}")
+        else:
+            print("First Pickup At: Never")
+            
+        if debug['successful_dropoff_step'] is not None:
+            print(f"Successful Dropoff At: Step {debug['successful_dropoff_step']}")
+        else:
+            print("Successful Dropoff At: Never")
+    
+    print("\nAction Sequence:")
+    action_names = ["South", "North", "East", "West", "Pickup", "Dropoff"]
+    for i, action in enumerate(episode_info['actions']):
+        action_str = action_names[action]
+        position = episode_info['positions'][i] if i < len(episode_info['positions']) else "N/A"
+        reward = episode_info['rewards'][i] if i < len(episode_info['rewards']) else "N/A"
+        passenger = "With passenger" if episode_info['passenger_statuses'][i] else "No passenger"
         
-        # Check if we're using the old or new environment processor
-        feature_size = 8  # Original feature size
+        print(f"Step {i+1}: {action_str} at {position} → Reward: {reward}, {passenger}")
+    
+    print("\nFinal Status:")
+    if episode_info['destination_reached']:
+        print("✅ SUCCESS: Passenger successfully delivered!")
+    elif episode_info['passenger_picked_up']:
+        print("❌ FAILED: Passenger picked up but not delivered")
+    else:
+        print("❌ FAILED: Passenger not picked up")
+    print("============================")
+
+def train(env, agent, num_episodes=1000):
+    """
+    Training function with additional debugging metrics
+    """
+    all_rewards = []
+    all_steps = []
+    
+    # For tracking success rates
+    batch_size = 100
+    batch_pickups = 0   # Successful pickups in current batch
+    batch_deliveries = 0  # Successful deliveries in current batch
+    
+    # For advanced debugging
+    batch_wall_hits = 0
+    batch_invalid_pickups = 0
+    batch_invalid_dropoffs = 0
+    batch_pickup_steps = []  # Steps to first pickup in each episode
+    batch_dropoff_steps = []  # Steps to successful dropoff in each episode
+    
+    # For tracking across all batches
+    batch_rewards = []  # Average reward per batch
+    batch_steps = []    # Average steps per batch
+    batch_pickup_rates = []  # Pickup rate per batch
+    batch_delivery_rates = []  # Delivery rate per batch
+    
+    # Advanced debugging metrics across batches
+    batch_avg_wall_hits = []
+    batch_avg_invalid_pickups = []
+    batch_avg_invalid_dropoffs = []
+    batch_avg_pickup_time = []
+    batch_avg_dropoff_time = []
+    
+    # For tracking current batch
+    current_batch_rewards = []
+    current_batch_steps = []
+    
+    # For tracking last episode in each batch
+    last_episode_info = None
+    
+    global visited
+    global unvisited
+    global destionation_station
+    global passenger_station
+    global passenger_place
+    
+    for episode in range(num_episodes):
+        # Episode initialization
+        passenger_on = 0
+        stage_0 = 0
+        stage_1 = 0
+        raw_obs, _ = env.reset()
+        unvisited = [(raw_obs[2], raw_obs[3]), (raw_obs[4], raw_obs[5]), (raw_obs[6], raw_obs[7]), (raw_obs[8], raw_obs[9])]
+        visited = []
+        destionation_station = []
+        passenger_station = []
+        passenger_place = None
         
-        # Load model architecture with the correct input size
-        self.model = ActorNetwork(
-            input_dim=feature_size,
-            output_dim=6,  # 6 possible actions
-            hidden_dim=64   # Increased from original 8 to 64
+        state, visited, unvisited, destionation_station, passenger_station, passenger_place = parse_state(
+            raw_obs, passenger_on, stage_0, stage_1, visited, unvisited, destionation_station, passenger_station, None
         )
         
-        # Load pre-trained weights if they exist
-        if os.path.exists(model_path):
-            try:
-                checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+        total_reward = 0.0
+        done = False
+        steps = 0
+        
+        # Debug tracking for this episode
+        episode_wall_hits = 0
+        episode_invalid_pickups = 0
+        episode_invalid_dropoffs = 0
+        first_pickup_step = None
+        successful_dropoff_step = None
+        
+        # For tracking detailed information about this episode
+        episode_tracking = {
+            'actions': [],
+            'positions': [],
+            'rewards': [],
+            'passenger_statuses': [],
+            'total_reward': 0,
+            'passenger_picked_up': False,
+            'destination_reached': False,
+            'debug_info': {
+                'wall_hits': 0,
+                'invalid_pickups': 0,
+                'invalid_dropoffs': 0,
+                'first_pickup_step': None,
+                'successful_dropoff_step': None
+            }
+        }
+        
+        action_all = []
+        queue = []
+        
+        # For tracking current episode
+        episode_pickup = False
+        episode_delivery = False
+        
+        while not done:
+            # Select action
+            action = agent.act(state)
+            action_all.append(action)
+            
+            # Track this step
+            episode_tracking['actions'].append(action)
+            episode_tracking['positions'].append((raw_obs[0], raw_obs[1]))
+            episode_tracking['passenger_statuses'].append(passenger_on)
+            
+            # Handle pickup/dropoff logic
+            if action == ACTION_PICKUP and passenger_on == 0 and state[5] == True and state[0] == (0, 0):
+                passenger_on = 1
+                episode_tracking['passenger_picked_up'] = True
+                episode_pickup = True
                 
-                # Support different model formats (normal dict or checkpoint dict)
-                if isinstance(checkpoint, dict) and 'q_network' in checkpoint:
-                    self.model.load_state_dict(checkpoint['q_network'])
-                else:
-                    self.model.load_state_dict(checkpoint)
-                    
-                self.model.eval()  # Set to evaluation mode
-                print(f"Successfully loaded model from {model_path}")
-            except Exception as e:
-                print(f"Error loading model: {e}")
-                print("Using untrained model instead.")
-        else:
-            print(f"Warning: Model file '{model_path}' not found. Using untrained model.")
-        
-        # For detecting and preventing oscillations
-        self.position_history = deque(maxlen=20)  # Track more positions
-        self.action_history = deque(maxlen=20)  # Track more actions
-        self.oscillation_count = 0
-        self.severe_oscillation_count = 0  # Count for severe oscillations
-        self.axis_diversity_count = 0  # Track how long we've been moving in same axis
-        self.last_axis = None  # Track which axis we're moving along (0=NS, 1=EW)
-        self.force_axis_change_after = 4  # Force axis change after this many steps on same axis
-        
-        # Set up a forced exploration sequence for escaping loops
-        self.escape_mode = False
-        self.escape_sequence = []
-        self.escape_index = 0
-        
-        # Track direction frequencies to ensure diversity
-        self.axis_counts = {0: 0, 1: 0}  # 0=NS axis, 1=EW axis
-        
-        # Track success/fail over time
-        self.success_history = []
-        self.steps_since_last_success = 0
-    
-    def get_action(self, obs):
-        """
-        Select an action based on the current observation
-        
-        Args:
-            obs: The current environment observation
+                # Record first successful pickup
+                if first_pickup_step is None:
+                    first_pickup_step = steps
             
-        Returns:
-            int: The selected action (0-5)
-        """
-        # Process the observation to get state features
-        state_full, info = self.env_processor.process_observation(obs)
-        
-        # Take only the first 8 features to match the model's input size
-        state = state_full[:8]
-        
-        # Record current position for oscillation detection
-        current_position = (info["taxi_position"], info["has_passenger"])
-        self.position_history.append(current_position)
-        
-        # Check for oscillation
-        is_oscillating = self._detect_oscillation()
-        
-        # Update oscillation count
-        if is_oscillating:
-            self.oscillation_count += 1
-            # Enter escape mode if oscillation is persistent
-            if self.oscillation_count >= 3 and not self.escape_mode:
-                self._enter_escape_mode(info)
+            if action == ACTION_DROPOFF and passenger_on:
+                passenger_on = 0
+                passenger_place = (raw_obs[0], raw_obs[1])
+            
+            # Take action in environment
+            raw_next_obs, reward, done, info = env.step(action)
+            episode_tracking['rewards'].append(reward)
+            
+            # Track debugging information based on rewards and actions
+            # Wall hits (movement action with negative reward)
+            if action in [ACTION_NORTH, ACTION_SOUTH, ACTION_EAST, ACTION_WEST] and reward <= -5:
+                episode_wall_hits += 1
+                batch_wall_hits += 1
                 
-            # Check for severe oscillation (may need to force exit)
-            if self.oscillation_count > 10:
-                self.severe_oscillation_count += 1
-                # If severely stuck, consider exit code 1 to signal problem
-                if self.severe_oscillation_count > 5:
-                    print("\n*** SEVERE OSCILLATION DETECTED ***")
-                    print(f"Position history (last {len(self.position_history)} steps):")
-                    for i, (pos, has_pass) in enumerate(self.position_history):
-                        print(f"Step {i+1}: Position {pos} {'with' if has_pass else 'without'} passenger")
-                    print("\nAction history:")
-                    action_names = ["South", "North", "East", "West", "Pickup", "Dropoff"]
-                    for i, action in enumerate(self.action_history):
-                        print(f"Step {i+1}: {action_names[action]}")
-                    
-                    # If completely unable to solve, exit with code 1
-                    if self.severe_oscillation_count > 15:
-                        print("Agent unable to solve environment due to severe oscillation. Exiting.")
-                        # Uncomment the next line to actually exit
-                        # exit(1)
-        else:
-            self.oscillation_count = max(0, self.oscillation_count - 1)
-            self.severe_oscillation_count = 0
-            # Exit escape mode if oscillation has stopped
-            if self.oscillation_count == 0:
-                self.escape_mode = False
-        
-        # Use the model to get action probabilities
-        with torch.no_grad():
-            action_probs = self.model(state).cpu().numpy()
-        
-        # Special case handling
-        if info["can_dropoff"]:
-            # Always drop off when possible
-            action = 5  # DROPOFF
-            self.success_history.append(True)
-            self.steps_since_last_success = 0
-        elif info["can_pickup"] and not info["has_passenger"]:
-            # Always pick up when possible and we don't have a passenger
-            action = 4  # PICKUP
-        elif self.escape_mode:
-            # Use the pre-planned escape sequence
-            action = self.escape_sequence[self.escape_index]
-            self.escape_index = (self.escape_index + 1) % len(self.escape_sequence)
-            
-            # If we've completed the escape sequence, exit escape mode
-            if self.escape_index == 0:
-                self.escape_mode = False
-        else:
-            # Normal operation with advanced anti-oscillation
-            
-            # Sort actions by probability
-            sorted_actions = action_probs.argsort()[::-1]
-            
-            # Check if we need to force axis diversity
-            current_axis = self._get_axis_from_last_actions()
-            
-            if is_oscillating or self.axis_diversity_count >= self.force_axis_change_after:
-                # Force a change of movement axis
-                if current_axis == 0:  # If moving North-South
-                    # Force East-West movement
-                    candidate_actions = [a for a in sorted_actions if a in [2, 3]]  # East or West
-                    if candidate_actions:
-                        action = candidate_actions[0]
-                    else:
-                        action = random.choice([2, 3])  # Fallback to random E/W
-                elif current_axis == 1:  # If moving East-West
-                    # Force North-South movement
-                    candidate_actions = [a for a in sorted_actions if a in [0, 1]]  # South or North
-                    if candidate_actions:
-                        action = candidate_actions[0]
-                    else:
-                        action = random.choice([0, 1])  # Fallback to random N/S
-                else:
-                    # If axis is unknown, try second best action
-                    if self.oscillation_count > 5:
-                        # For severe oscillation, pick a completely random movement
-                        action = random.choice([0, 1, 2, 3])
-                    else:
-                        # Try second best action
-                        action = sorted_actions[1] if len(sorted_actions) > 1 else sorted_actions[0]
+            # Invalid pickups
+            if action == ACTION_PICKUP and reward <= -5:
+                episode_invalid_pickups += 1
+                batch_invalid_pickups += 1
                 
-                # Reset axis diversity counter
-                self.axis_diversity_count = 0
+            # Invalid dropoffs
+            if action == ACTION_DROPOFF and reward <= -5:
+                episode_invalid_dropoffs += 1
+                batch_invalid_dropoffs += 1
+                
+            # Successful dropoff (completion)
+            if done and action == ACTION_DROPOFF and reward > 0:
+                successful_dropoff_step = steps
+                episode_delivery = True
+            
+            # Additional logic for loop prevention
+            if action in queue:
+                reward -= 3
+            queue.append(action)
+            if len(queue) == 4:
+                queue.pop(0)
+            
+            # Calculate next state
+            next_state, next_visited, next_unvisited, next_destionation_station, next_passenger_station, next_passenger_place = parse_state(
+                raw_next_obs, passenger_on, stage_0, stage_1, visited, unvisited, destionation_station, passenger_station, passenger_place
+            )
+            
+            # Reward shaping based on movement toward goal
+            if (abs(next_state[0][0]) + abs(next_state[0][1])) < (abs(state[0][0]) + abs(state[0][1])):
+                reward += 2
             else:
-                # Use the best action from the model
-                action = sorted_actions[0]
+                reward -= 2
+            
+            # Track successful pickups
+            if info.get("pick_up_passenger", False):
+                episode_pickup = True
                 
-                # Update axis diversity counter if continuing on same axis
-                new_axis = self._get_action_axis(action)
-                if new_axis is not None and new_axis == current_axis:
-                    self.axis_diversity_count += 1
-                else:
-                    self.axis_diversity_count = 0
-        
-        # Validate actions - don't try pickup/dropoff inappropriately
-        if action == 4 and not info["can_pickup"]:  # Trying PICKUP without passenger nearby
-            # Choose a movement action toward the target instead
-            action = self._choose_movement_action(info, avoid_axis=current_axis)
-        elif action == 5 and not info["can_dropoff"]:  # Trying DROPOFF without being at destination
-            # Choose a movement action toward the target instead
-            action = self._choose_movement_action(info, avoid_axis=current_axis)
-        
-        # Remember this action for oscillation detection
-        self.action_history.append(action)
-        
-        # Update axis counts for statistical tracking
-        action_axis = self._get_action_axis(action)
-        if action_axis is not None:
-            self.axis_counts[action_axis] += 1
-        
-        # Update the processor with the selected action
-        self.env_processor.update_with_action(action)
-        
-        # Increment step counter since last success
-        self.steps_since_last_success += 1
-        
-        # Check if we're not making progress toward goal
-        if self.steps_since_last_success > 1000:
-            print("Warning: Agent hasn't succeeded in 1000 steps. May be stuck.")
-            self.steps_since_last_success = 0
-        
-        return action
-    
-    def _get_action_axis(self, action):
-        """Determine which axis an action moves along"""
-        if action in [0, 1]:  # South, North
-            return 0  # North-South axis
-        elif action in [2, 3]:  # East, West
-            return 1  # East-West axis
-        return None  # Not a movement action
-    
-    def _get_axis_from_last_actions(self):
-        """Determine which axis we've been moving along recently"""
-        # Look at last few actions
-        movement_actions = [a for a in self.action_history if a in [0, 1, 2, 3]]
-        if not movement_actions:
-            return None
+                # Record first successful pickup if not already recorded
+                if first_pickup_step is None:
+                    first_pickup_step = steps
             
-        # Count actions by axis
-        ns_count = sum(1 for a in movement_actions[-4:] if a in [0, 1])
-        ew_count = sum(1 for a in movement_actions[-4:] if a in [2, 3])
-        
-        if ns_count > ew_count:
-            return 0  # North-South dominant
-        elif ew_count > ns_count:
-            return 1  # East-West dominant
-        return None  # No clear dominance
-    
-    def _enter_escape_mode(self, info):
-        """Generate an escape sequence to break out of oscillation"""
-        self.escape_mode = True
-        self.escape_index = 0
-        
-        # Determine current movement axis
-        current_axis = self._get_axis_from_last_actions()
-        
-        # Create a sequence that will definitely break the pattern
-        if current_axis == 0:  # If stuck in North-South
-            # Make an East-West-North-South pattern with randomness
-            self.escape_sequence = [2, 3, 1, 0]  # E, W, N, S
-        elif current_axis == 1:  # If stuck in East-West
-            # Make a North-South-East-West pattern with randomness
-            self.escape_sequence = [0, 1, 3, 2]  # S, N, W, E
-        else:
-            # Mix of all directions
-            self.escape_sequence = [0, 2, 1, 3]  # S, E, N, W
-        
-        # Add randomness for severe oscillation
-        if self.oscillation_count > 5:
-            # Completely randomize the escape sequence
-            random.shuffle(self.escape_sequence)
-            # Make it longer for more exploration
-            self.escape_sequence = self.escape_sequence * 2
+            # Q-learning update
+            agent.learn(state, action, reward, next_state, done)
             
-    def _detect_oscillation(self):
-        """Detect if the agent is stuck in an oscillation pattern"""
-        if len(self.position_history) < 6:
-            return False
-        
-        # Check for a pattern of length 2
-        last_two = list(self.position_history)[-2:]
-        prev_two = list(self.position_history)[-4:-2]
-        if last_two == prev_two:
-            return True
+            # Update current state
+            state = next_state
+            raw_obs = raw_next_obs
+            visited = next_visited
+            unvisited = next_unvisited
+            destionation_station = next_destionation_station
+            passenger_station = next_passenger_station
+            passenger_place = next_passenger_place
             
-        # Check for a pattern of length 3
-        if len(self.position_history) >= 6:
-            last_three = list(self.position_history)[-3:]
-            prev_three = list(self.position_history)[-6:-3]
-            if last_three == prev_three:
-                return True
+            total_reward += reward
+            steps += 1
+        
+        # Update batch counters
+        if episode_pickup:
+            batch_pickups += 1
+            batch_pickup_steps.append(first_pickup_step if first_pickup_step is not None else steps)
+        
+        if episode_delivery:
+            batch_deliveries += 1
+            batch_dropoff_steps.append(successful_dropoff_step)
+        
+        # Store total reward for this episode
+        episode_tracking['total_reward'] = total_reward
+        all_rewards.append(total_reward)
+        all_steps.append(steps)
+        
+        # Store for current batch
+        current_batch_rewards.append(total_reward)
+        current_batch_steps.append(steps)
+        
+        # Update debugging info
+        episode_tracking['debug_info'] = {
+            'wall_hits': episode_wall_hits,
+            'invalid_pickups': episode_invalid_pickups,
+            'invalid_dropoffs': episode_invalid_dropoffs,
+            'first_pickup_step': first_pickup_step,
+            'successful_dropoff_step': successful_dropoff_step
+        }
+        
+        # Update exploration rate
+        agent.update_epsilon()
+        
+        # If this is the last episode in a batch, store its info and print statistics
+        if (episode + 1) % batch_size == 0:
+            # Store the last episode info
+            last_episode_info = episode_tracking
+            
+            # Calculate batch statistics
+            current_batch_avg_reward = np.mean(current_batch_rewards)
+            current_batch_avg_steps = np.mean(current_batch_steps)
+            current_batch_pickup_rate = (batch_pickups / batch_size) * 100
+            current_batch_delivery_rate = (batch_deliveries / batch_size) * 100
+            
+            # Calculate advanced debugging metrics
+            current_batch_avg_wall_hits = batch_wall_hits / batch_size
+            current_batch_avg_invalid_pickups = batch_invalid_pickups / batch_size
+            current_batch_avg_invalid_dropoffs = batch_invalid_dropoffs / batch_size
+            
+            # Calculate average pickup and dropoff times (only for successful episodes)
+            current_batch_avg_pickup_time = np.mean(batch_pickup_steps) if batch_pickup_steps else float('inf')
+            current_batch_avg_dropoff_time = np.mean(batch_dropoff_steps) if batch_dropoff_steps else float('inf')
+            
+            # Store batch statistics
+            batch_rewards.append(current_batch_avg_reward)
+            batch_steps.append(current_batch_avg_steps)
+            batch_pickup_rates.append(current_batch_pickup_rate)
+            batch_delivery_rates.append(current_batch_delivery_rate)
+            
+            # Store advanced debugging metrics
+            batch_avg_wall_hits.append(current_batch_avg_wall_hits)
+            batch_avg_invalid_pickups.append(current_batch_avg_invalid_pickups)
+            batch_avg_invalid_dropoffs.append(current_batch_avg_invalid_dropoffs)
+            batch_avg_pickup_time.append(current_batch_avg_pickup_time)
+            batch_avg_dropoff_time.append(current_batch_avg_dropoff_time)
+            
+            # Get batch number
+            batch_num = (episode + 1) // batch_size
+            
+            # Print current batch summary
+            print(f"\n=== Batch {batch_num} (Episodes {episode+1-batch_size+1}-{episode+1}) ===")
+            print(f"Epsilon: {agent.epsilon:.4f}")
+            
+            # Print comparison table
+            print("\n=== Batch Comparison ===")
+            print("Metric                | Previous Batch     | Current Batch")
+            print("----------------------|-------------------|------------------")
+            
+            # Previous batch info (if available)
+            if batch_num > 1:
+                prev_reward = batch_rewards[-2]
+                prev_steps = batch_steps[-2]
+                prev_pickup = batch_pickup_rates[-2]
+                prev_delivery = batch_delivery_rates[-2]
                 
-        # Check for East-West or North-South dominance
-        movement_actions = [a for a in self.action_history if a in [0, 1, 2, 3]]
-        if len(movement_actions) >= 8:
-            recent_actions = movement_actions[-8:]
+                prev_wall_hits = batch_avg_wall_hits[-2]
+                prev_invalid_pickups = batch_avg_invalid_pickups[-2]
+                prev_invalid_dropoffs = batch_avg_invalid_dropoffs[-2]
+                prev_pickup_time = batch_avg_pickup_time[-2]
+                prev_dropoff_time = batch_avg_dropoff_time[-2]
+                
+                print(f"Avg Reward            | {prev_reward:10.2f}       | {current_batch_avg_reward:10.2f}")
+                print(f"Avg Steps             | {prev_steps:10.2f}       | {current_batch_avg_steps:10.2f}")
+                print(f"Pickup Rate           | {prev_pickup:10.2f}%      | {current_batch_pickup_rate:10.2f}%")
+                print(f"Delivery Rate         | {prev_delivery:10.2f}%      | {current_batch_delivery_rate:10.2f}%")
+                
+                print("\n=== Advanced Debugging Metrics ===")
+                print(f"Avg Wall Hits         | {prev_wall_hits:10.2f}       | {current_batch_avg_wall_hits:10.2f}")
+                print(f"Avg Invalid Pickups   | {prev_invalid_pickups:10.2f}       | {current_batch_avg_invalid_pickups:10.2f}")
+                print(f"Avg Invalid Dropoffs  | {prev_invalid_dropoffs:10.2f}       | {current_batch_avg_invalid_dropoffs:10.2f}")
+                
+                # Handle infinite values for better display
+                prev_pickup_str = f"{prev_pickup_time:10.2f}" if prev_pickup_time != float('inf') else "    N/A    "
+                curr_pickup_str = f"{current_batch_avg_pickup_time:10.2f}" if current_batch_avg_pickup_time != float('inf') else "    N/A    "
+                
+                prev_dropoff_str = f"{prev_dropoff_time:10.2f}" if prev_dropoff_time != float('inf') else "    N/A    "
+                curr_dropoff_str = f"{current_batch_avg_dropoff_time:10.2f}" if current_batch_avg_dropoff_time != float('inf') else "    N/A    "
+                
+                print(f"Avg Steps to Pickup   | {prev_pickup_str}       | {curr_pickup_str}")
+                print(f"Avg Steps to Dropoff  | {prev_dropoff_str}       | {curr_dropoff_str}")
+            else:
+                # No previous batch
+                print(f"Avg Reward            | N/A              | {current_batch_avg_reward:10.2f}")
+                print(f"Avg Steps             | N/A              | {current_batch_avg_steps:10.2f}")
+                print(f"Pickup Rate           | N/A              | {current_batch_pickup_rate:10.2f}%")
+                print(f"Delivery Rate         | N/A              | {current_batch_delivery_rate:10.2f}%")
+                
+                print("\n=== Advanced Debugging Metrics ===")
+                print(f"Avg Wall Hits         | N/A              | {current_batch_avg_wall_hits:10.2f}")
+                print(f"Avg Invalid Pickups   | N/A              | {current_batch_avg_invalid_pickups:10.2f}")
+                print(f"Avg Invalid Dropoffs  | N/A              | {current_batch_avg_invalid_dropoffs:10.2f}")
+                
+                # Handle infinite values for better display
+                curr_pickup_str = f"{current_batch_avg_pickup_time:10.2f}" if current_batch_avg_pickup_time != float('inf') else "    N/A    "
+                curr_dropoff_str = f"{current_batch_avg_dropoff_time:10.2f}" if current_batch_avg_dropoff_time != float('inf') else "    N/A    "
+                
+                print(f"Avg Steps to Pickup   | N/A              | {curr_pickup_str}")
+                print(f"Avg Steps to Dropoff  | N/A              | {curr_dropoff_str}")
             
-            # Count directional actions
-            ns_count = sum(1 for a in recent_actions if a in [0, 1])
-            ew_count = sum(1 for a in recent_actions if a in [2, 3])
+            # Print detailed information about the last episode
+            # print_last_episode_info(last_episode_info)
             
-            # If heavily biased toward one axis (>75%), consider it oscillating
-            if ns_count >= 6 or ew_count >= 6:
-                return True
-        
-        return False
+            # Reset batch counters and trackers
+            batch_pickups = 0
+            batch_deliveries = 0
+            batch_wall_hits = 0
+            batch_invalid_pickups = 0
+            batch_invalid_dropoffs = 0
+            batch_pickup_steps = []
+            batch_dropoff_steps = []
+            current_batch_rewards = []
+            current_batch_steps = []
+            
+            # Save model periodically
+            if (episode + 1) % (batch_size * 10) == 0:
+                agent.save(f"q_table_{episode+1}.pkl")
     
-    def _choose_movement_action(self, info, avoid_axis=None):
-        """Choose a movement action toward the target with axis diversity"""
-        taxi_pos = info["taxi_position"]
-        target = info["target"]
-        
-        # Calculate direction to target
-        dx = target[0] - taxi_pos[0]
-        dy = target[1] - taxi_pos[1]
-        
-        # Check if we can move in the preferred direction (no obstacles)
-        obstacles = [info.get("obstacle_north", 0), info.get("obstacle_south", 0), 
-                    info.get("obstacle_east", 0), info.get("obstacle_west", 0)]
-        
-        # Get valid actions (not blocked by obstacles)
-        valid_actions = [i for i, blocked in enumerate(obstacles) if blocked == 0 and i < 4]
-        if not valid_actions:
-            return random.randint(0, 3)  # All blocked, pick random
-            
-        # If we need to avoid an axis, filter actions
-        if avoid_axis is not None:
-            if avoid_axis == 0:  # Avoid North-South
-                filtered_actions = [a for a in valid_actions if a in [2, 3]]
-                if filtered_actions:
-                    valid_actions = filtered_actions
-            elif avoid_axis == 1:  # Avoid East-West
-                filtered_actions = [a for a in valid_actions if a in [0, 1]]
-                if filtered_actions:
-                    valid_actions = filtered_actions
-        
-        # Choose based on direction to target
-        preferred_actions = []
-        
-        if dx > 0 and 0 in valid_actions:  # Need to go south
-            preferred_actions.append(0)
-        if dx < 0 and 1 in valid_actions:  # Need to go north
-            preferred_actions.append(1)
-        if dy > 0 and 2 in valid_actions:  # Need to go east
-            preferred_actions.append(2)
-        if dy < 0 and 3 in valid_actions:  # Need to go west
-            preferred_actions.append(3)
-            
-        # If we have preferred actions, choose one
-        if preferred_actions:
-            return random.choice(preferred_actions)
-        else:
-            # No preferred action, choose a random valid one
-            return random.choice(valid_actions)
+    # Save final model
+    agent.save("q_table.pkl")
+    
+    # Return training history
+    return {
+        "rewards": all_rewards,
+        "steps": all_steps,
+        "batch_rewards": batch_rewards,
+        "batch_steps": batch_steps,
+        "batch_pickup_rates": batch_pickup_rates,
+        "batch_delivery_rates": batch_delivery_rates,
+        "batch_avg_wall_hits": batch_avg_wall_hits,
+        "batch_avg_invalid_pickups": batch_avg_invalid_pickups,
+        "batch_avg_invalid_dropoffs": batch_avg_invalid_dropoffs,
+        "batch_avg_pickup_time": batch_avg_pickup_time,
+        "batch_avg_dropoff_time": batch_avg_dropoff_time
+    }
 
-# Create agent instance
-agent = TaxiAgent('dqn_agent.pth')
-
-# Implement the required get_action function for the environment
 def get_action(obs):
-    """
-    Interface function called by the environment
+    """Function called during testing to get the next action"""
+    # Initialize on first call
+    if not hasattr(get_action, "agent"):
+        get_action.agent = QLearningAgent(epsilon=0.0)  # no exploration in test
+        get_action.agent.load("q_table.pkl")
+        get_action.stage_0 = 0
+        get_action.stage_1 = 0
+        get_action.passenger_on = 0  # not carrying passenger
+        get_action.last_state = None
+        get_action.last_action = None
+        get_action.visited = []
+        get_action.unvisited = []
+        get_action.destionation_station = []
+        get_action.passenger_station = []
+        get_action.passenger_place = None
     
-    Args:
-        obs: Current observation from the environment
+    # Update based on previous action
+    if get_action.last_state is not None and get_action.last_action is not None:
+        prev_state = get_action.last_state
+        prev_action = get_action.last_action
         
-    Returns:
-        int: Selected action (0-5)
-    """
-    return agent.get_action(obs)
+        if prev_action == ACTION_PICKUP:
+            if prev_state[5] == 1 and get_action.passenger_on == 0 and prev_state[0] == (0, 0):
+                get_action.passenger_on = 1
+        elif prev_action == ACTION_DROPOFF:
+            if get_action.passenger_on == 1:
+                get_action.passenger_on = 0
+                get_action.passenger_place = (obs[0], obs[1])
+    
+    # Parse current state
+    state, get_action.visited, get_action.unvisited, get_action.destionation_station, get_action.passenger_station, get_action.passenger_place = parse_state(
+        obs, get_action.passenger_on, get_action.stage_0, get_action.stage_1, 
+        get_action.visited, get_action.unvisited, get_action.destionation_station, 
+        get_action.passenger_station, get_action.passenger_place
+    )
+    # Get action from Q-table
+    Q_values = get_action.agent.Q.get(state, None)
+    if Q_values is None:
+        action = random.randint(0, 5)
+    else:
+        action = np.argmax(Q_values)
+    
+    # Remember current state and action
+    get_action.last_state = state
+    get_action.last_action = action
+    
+    return action
+
+if __name__ == "__main__":
+    # Create environment and agent
+    agent = QLearningAgent(
+        alpha=0.1,
+        gamma=0.99,
+        epsilon=1.0,
+        epsilon_min=0.01,
+        epsilon_decay=0.99995,
+        action_size=6
+    )
+    
+    env = SimpleTaxiEnv(10, 5000)
+    
+    # Extend SimpleTaxiEnv to add detailed tracking
+    original_step = env.step
+    
+    def step_with_tracking(action):
+        next_obs, reward, done, info = original_step(action)
+        if not isinstance(info, dict):
+            info = {}
+            
+        # Track successful pickup
+        if action == ACTION_PICKUP and reward >= 0:
+            info["pick_up_passenger"] = True
+        else:
+            info["pick_up_passenger"] = False
+            
+        # Track wall hits
+        if action in [ACTION_NORTH, ACTION_SOUTH, ACTION_EAST, ACTION_WEST] and reward <= -5:
+            info["wall_hit"] = True
+        else:
+            info["wall_hit"] = False
+            
+        # Track invalid pickups
+        if action == ACTION_PICKUP and reward <= -5:
+            info["invalid_pickup"] = True
+        else:
+            info["invalid_pickup"] = False
+            
+        # Track invalid dropoffs
+        if action == ACTION_DROPOFF and reward <= -5:
+            info["invalid_dropoff"] = True
+        else:
+            info["invalid_dropoff"] = False
+            
+        return next_obs, reward, done, info
+    
+    env.step = step_with_tracking
+    
+    # Train agent
+    print("Starting training...")
+    try:
+        history = train(env, agent, num_episodes=30000)
+        
+        # Second round of training with reset epsilon
+        agent.epsilon = 1.0
+        print("\nStarting second round of training...")
+        history = train(env, agent, num_episodes=30000)
+        
+        print("Training complete! Final epsilon =", agent.epsilon)
+        
+        # Try to create a plot of the training history
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Create a figure with multiple subplots
+            fig, axes = plt.subplots(3, 2, figsize=(15, 15))
+            
+            # Plot 1: Success Rates
+            axes[0, 0].plot(history['batch_pickup_rates'], label='Pickup Rate')
+            axes[0, 0].plot(history['batch_delivery_rates'], label='Delivery Rate')
+            axes[0, 0].set_title('Success Rates per Batch')
+            axes[0, 0].set_xlabel('Batch')
+            axes[0, 0].set_ylabel('Success Rate (%)')
+            axes[0, 0].legend()
+            axes[0, 0].grid(True)
+            
+            # Plot 2: Rewards and Steps
+            ax1 = axes[0, 1]
+            ax2 = ax1.twinx()
+            
+            l1, = ax1.plot(history['batch_rewards'], 'b-', label='Avg Reward')
+            l2, = ax2.plot(history['batch_steps'], 'r-', label='Avg Steps')
+            
+            ax1.set_xlabel('Batch')
+            ax1.set_ylabel('Average Reward', color='b')
+            ax2.set_ylabel('Average Steps', color='r')
+            
+            ax1.legend(handles=[l1, l2], loc='upper left')
+            ax1.grid(True)
+            ax1.set_title('Reward and Steps per Batch')
+            
+            # Plot 3: Wall Hits
+            axes[1, 0].plot(history['batch_avg_wall_hits'])
+            axes[1, 0].set_title('Average Wall Hits per Batch')
+            axes[1, 0].set_xlabel('Batch')
+            axes[1, 0].set_ylabel('Average Wall Hits')
+            axes[1, 0].grid(True)
+            
+            # Plot 4: Invalid Pickups and Dropoffs
+            axes[1, 1].plot(history['batch_avg_invalid_pickups'], label='Invalid Pickups')
+            axes[1, 1].plot(history['batch_avg_invalid_dropoffs'], label='Invalid Dropoffs')
+            axes[1, 1].set_title('Invalid Actions per Batch')
+            axes[1, 1].set_xlabel('Batch')
+            axes[1, 1].set_ylabel('Average Invalid Actions')
+            axes[1, 1].legend()
+            axes[1, 1].grid(True)
+            
+            # Plot 5: Pickup and Dropoff Times
+            # Filter out inf values
+            pickup_times = [t if t != float('inf') else None for t in history['batch_avg_pickup_time']]
+            dropoff_times = [t if t != float('inf') else None for t in history['batch_avg_dropoff_time']]
+            
+            # Replace None with NaN for plotting
+            pickup_times = np.array([float('nan') if t is None else t for t in pickup_times])
+            dropoff_times = np.array([float('nan') if t is None else t for t in dropoff_times])
+            
+            axes[2, 0].plot(pickup_times, label='Time to Pickup')
+            axes[2, 0].plot(dropoff_times, label='Time to Dropoff')
+            axes[2, 0].set_title('Average Time to Complete Tasks')
+            axes[2, 0].set_xlabel('Batch')
+            axes[2, 0].set_ylabel('Average Steps')
+            axes[2, 0].legend()
+            axes[2, 0].grid(True)
+            
+            # Plot 6: Efficiency (Dropoff/Pickup Ratio)
+            delivery_pickup_ratio = []
+            for pickup_rate, delivery_rate in zip(history['batch_pickup_rates'], history['batch_delivery_rates']):
+                ratio = (delivery_rate / pickup_rate) * 100 if pickup_rate > 0 else 0
+                delivery_pickup_ratio.append(ratio)
+            
+            axes[2, 1].plot(delivery_pickup_ratio)
+            axes[2, 1].set_title('Delivery to Pickup Ratio per Batch')
+            axes[2, 1].set_xlabel('Batch')
+            axes[2, 1].set_ylabel('Ratio (%)')
+            axes[2, 1].grid(True)
+            
+            plt.tight_layout()
+            plt.savefig('training_history.png')
+            print("\nTraining history plot saved to 'training_history.png'")
+        except Exception as e:
+            print(f"Could not create plot: {e}")
+            
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Saving model...")
+        agent.save("q_table_interrupted.pkl")
+        print("Model saved to 'q_table_interrupted.pkl'")
+    # Get
