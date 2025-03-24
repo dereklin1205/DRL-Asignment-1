@@ -619,7 +619,7 @@ def get_action(obs):
         get_action.last_state = None
         get_action.last_action = None
         get_action.visited = []
-        get_action.unvisited = (obs[2], obs[3]), (obs[4], obs[5]), (obs[6], obs[7]), (obs[8], obs[9])
+        get_action.unvisited = [(obs[2], obs[3]), (obs[4], obs[5]), (obs[6], obs[7]), (obs[8], obs[9])]
         get_action.destionation_station = []
         get_action.passenger_station = []
         get_action.passenger_place = None
