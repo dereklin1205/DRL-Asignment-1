@@ -741,8 +741,8 @@ def get_action(obs):
 if __name__ == "__main__":
     # Create environment and agent
     agent = QLearningAgent(
-        alpha=0.05,
-        gamma=0.8,
+        alpha=0.07,
+        gamma=0.85,
         epsilon=1.0,
         epsilon_min=0.01,
         epsilon_decay=0.99995,
@@ -790,9 +790,8 @@ if __name__ == "__main__":
     # Train agent
     print("Starting training...")
     try:
-        agent.epsilon_decay = 0.99997
-
-        history = train(env, agent, num_episodes=150000, difficulty="easy")
+        
+        history = train(env, agent, num_episodes=100000, difficulty="easy")
         
         # Second round of training with reset epsilon
         agent.epsilon = 1.0
