@@ -19,7 +19,7 @@ unvisited = []
 destionation_station = []
 passenger_station = []
 passenger_place = None
-
+wrong_len = 0
 def find_nearest_station(taxi_row, taxi_col, stations):
     min_distance = 1000
     nearest_station = []
@@ -36,6 +36,7 @@ def find_nearest_station(taxi_row, taxi_col, stations):
 
 def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destionation_station, passenger_station, passenger_place):
     """Parse the state from observation"""
+    global wrong_len
     (taxi_row,
      taxi_col,
      st0_row, st0_col,
@@ -100,6 +101,8 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
             unvisited.remove((st3_row, st3_col))
     
     # Determine goal based on passenger status
+    if len(visited)+len(unvisited) != 4:
+        wrong_len += 1
     if passenger_on == 0:
         if passenger_station:
             if len(passenger_station) >= 1:
@@ -109,8 +112,8 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
                 goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
             elif len(visited)>0:
                 goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
-            else:
-                goal = (st0_row - taxi_row, st0_col - taxi_col)
+            # else:
+            #     goal = (st0_row - taxi_row, st0_col - taxi_col)
                 
     else:
         if destionation_station:
@@ -121,8 +124,8 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
                 goal = (unvisited[0][0] - taxi_row, unvisited[0][1] - taxi_col)
             elif len(visited)>0:
                 goal = (visited[0][0] - taxi_row, visited[0][1] - taxi_col) 
-            else:
-                goal = (st0_row - taxi_row, st0_col - taxi_col)
+            # else:
+            #     goal = (st0_row - taxi_row, st0_col - taxi_col)
     
     # Update destination stations that are not the destination
     if dx0 == 0 and dy0 == 0 and not destination_look:
@@ -155,6 +158,14 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
     # Use known passenger place if available
     if not passenger_on and passenger_place is not None:
         goal = (passenger_place[0] - taxi_row, passenger_place[1] - taxi_col)
+    if len(visited)==3 and not destionation_station:
+        destionation_station = unvisited[0]
+    if len(visited)==3 and not passenger_station:
+        passenger_station = unvisited[0]
+    if passenger_place :
+        passenger_station = [passenger_place]
+    
+    
     
     parsed_state = (
         goal,
@@ -263,7 +274,7 @@ def print_last_episode_info(episode_info):
         print("❌ FAILED: Passenger not picked up")
     print("============================")
 
-def train(env, agent, num_episodes=1000):
+def train(env, agent, num_episodes=1000, difficulty ="easy"):
     """
     Training function with additional debugging metrics
     """
@@ -313,7 +324,7 @@ def train(env, agent, num_episodes=1000):
         passenger_on = 0
         stage_0 = 0
         stage_1 = 0
-        raw_obs, _ = env.reset()
+        raw_obs, _ = env.reset(difficulty = difficulty)
         unvisited = [(raw_obs[2], raw_obs[3]), (raw_obs[4], raw_obs[5]), (raw_obs[6], raw_obs[7]), (raw_obs[8], raw_obs[9])]
         visited = []
         destionation_station = []
@@ -383,7 +394,15 @@ def train(env, agent, num_episodes=1000):
             if action == ACTION_DROPOFF and passenger_on:
                 passenger_on = 0
                 passenger_place = (raw_obs[0], raw_obs[1])
-            
+            if len(queue) == 10:
+                queue.pop(0)
+            if len(queue) == 10:
+                count = 0
+                for actions in queue:
+                    if actions == action:
+                        count +=1
+                if count>5:
+                    action = random.randint(0, 5)
             # Take action in environment
             raw_next_obs, reward, done, info = env.step(action)
             episode_tracking['rewards'].append(reward)
@@ -410,11 +429,9 @@ def train(env, agent, num_episodes=1000):
                 episode_delivery = True
             
             # Additional logic for loop prevention
-            if action in queue:
-                reward -= 3
-            queue.append(action)
-            if len(queue) == 4:
-                queue.pop(0)
+            
+            
+            
             
             # Calculate next state
             next_state, next_visited, next_unvisited, next_destionation_station, next_passenger_station, next_passenger_place = parse_state(
@@ -519,7 +536,7 @@ def train(env, agent, num_episodes=1000):
             # Print current batch summary
             print(f"\n=== Batch {batch_num} (Episodes {episode+1-batch_size+1}-{episode+1}) ===")
             print(f"Epsilon: {agent.epsilon:.4f}")
-            
+            global wrong_len
             # Print comparison table
             print("\n=== Batch Comparison ===")
             print("Metric                | Previous Batch     | Current Batch")
@@ -557,6 +574,8 @@ def train(env, agent, num_episodes=1000):
                 
                 print(f"Avg Steps to Pickup   | {prev_pickup_str}       | {curr_pickup_str}")
                 print(f"Avg Steps to Dropoff  | {prev_dropoff_str}       | {curr_dropoff_str}")
+                print(f"wrong len             | {0}                     | {wrong_len}")
+
             else:
                 # No previous batch
                 print(f"Avg Reward            | N/A              | {current_batch_avg_reward:10.2f}")
@@ -624,7 +643,7 @@ def get_action(obs):
         get_action.last_state = None
         get_action.last_action = None
         get_action.visited = []
-        get_action.unvisited = []
+        get_action.unvisited = [(obs[2], obs[3]),( obs[4], obs[5]), (obs[6], obs[7]), (obs[8], obs[9])]
         get_action.destionation_station = []
         get_action.passenger_station = []
         get_action.passenger_place = None
@@ -657,18 +676,18 @@ def get_action(obs):
         action = random.randint(0, 5)
     else:
         action = np.argmax(Q_values)
-        if len(get_action.queue)<11:
-            get_action.queue.append(action)
-        elif len(get_action.queue)==10:
-            get_action.queue.pop(0)
         count = 0
         for action_q in get_action.queue:
             if action == action_q:
                 count +=1
-        if len(get_action.queue) == 10:
-            if count > 5:
+        if len(get_action.queue) >= 10:
+            if count > len(get_action.queue)//2:
                 ## pick second large Q value action
                 action = np.argsort(Q_values)[-2]
+        if len(get_action.queue)<11:
+            get_action.queue.append(action)
+        elif len(get_action.queue)==11:
+            get_action.queue.pop(0)
     
     # Remember current state and action
     get_action.last_state = state
@@ -728,12 +747,12 @@ if __name__ == "__main__":
     # Train agent
     print("Starting training...")
     try:
-        history = train(env, agent, num_episodes=30000)
+        history = train(env, agent, num_episodes=30000, difficulty="easy")
         
         # Second round of training with reset epsilon
         agent.epsilon = 1.0
         print("\nStarting second round of training...")
-        history = train(env, agent, num_episodes=30000)
+        history = train(env, agent, num_episodes=70000, difficulty="normal")
         
         print("Training complete! Final epsilon =", agent.epsilon)
         
