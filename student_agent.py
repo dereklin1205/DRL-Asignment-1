@@ -159,9 +159,9 @@ def parse_state(obs, passenger_on, stage_0, stage_1, visited, unvisited, destion
     if not passenger_on and passenger_place is not None:
         goal = (passenger_place[0] - taxi_row, passenger_place[1] - taxi_col)
     if len(visited)==3 and not destionation_station:
-        destionation_station = unvisited[0]
+        destionation_station = [unvisited[0]]
     if len(visited)==3 and not passenger_station:
-        passenger_station = unvisited[0]
+        passenger_station = [unvisited[0]]
     if passenger_place :
         passenger_station = [passenger_place]
     
