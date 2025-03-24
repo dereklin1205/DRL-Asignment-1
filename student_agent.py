@@ -619,10 +619,11 @@ def get_action(obs):
         get_action.last_state = None
         get_action.last_action = None
         get_action.visited = []
-        get_action.unvisited = [(obs[2], obs[3]), (obs[4], obs[5]), (obs[6], obs[7]), (obs[8], obs[9])]
+        get_action.unvisited = []
         get_action.destionation_station = []
         get_action.passenger_station = []
         get_action.passenger_place = None
+        get_action.queue = []
     
     # Update based on previous action
     if get_action.last_state is not None and get_action.last_action is not None:
@@ -643,12 +644,25 @@ def get_action(obs):
         get_action.visited, get_action.unvisited, get_action.destionation_station, 
         get_action.passenger_station, get_action.passenger_place
     )
+    if len(get_action.queue)<11:
+        get_action.queue.append(action)
+    elif len(get_action.queue)==10:
+        get_action.queue.pop(0)
+    
     # Get action from Q-table
     Q_values = get_action.agent.Q.get(state, None)
     if Q_values is None:
         action = random.randint(0, 5)
     else:
         action = np.argmax(Q_values)
+        count = 0
+        for action_q in get_action.queue:
+            if action == action_q:
+                count +=1
+        if len(get_action.queue) == 10:
+            if count > 5:
+                ## pick second large Q value action
+                action = np.argsort(Q_values)[-2]s
     
     # Remember current state and action
     get_action.last_state = state
