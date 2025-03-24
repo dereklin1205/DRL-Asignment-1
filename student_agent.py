@@ -292,10 +292,9 @@ def print_last_episode_info(episode_info):
     else:
         print("❌ FAILED: Passenger not picked up")
     print("============================")
-
-def train(env, agent, num_episodes=1000, difficulty ="easy"):
+def train(env, agent, num_episodes=1000, difficulty="easy"):
     """
-    Training function with additional debugging metrics
+    Training function with additional debugging metrics and best model saving
     """
     all_rewards = []
     all_steps = []
@@ -331,6 +330,10 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
     
     # For tracking last episode in each batch
     last_episode_info = None
+    
+    # For tracking the best model
+    best_avg_reward = float('-inf')
+    best_batch_num = 0
     
     global visited
     global unvisited
@@ -438,21 +441,11 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
             if done and action == ACTION_DROPOFF and reward > 0 and info.get("success", False):
                 successful_dropoff_step = steps
                 episode_delivery = True
-            # Additional logic for loop prevention
-            
-            
-            
             
             # Calculate next state
             next_state, next_visited, next_unvisited, next_destionation_station, next_passenger_station, next_passenger_place = parse_state(
                 raw_next_obs, passenger_on, stage_0, stage_1, visited, unvisited, destionation_station, passenger_station, passenger_place
             )
-            
-            # Reward shaping based on movement toward goal
-            # if (abs(next_state[0][0]) + abs(next_state[0][1])) < (abs(state[0][0]) + abs(state[0][1])):
-            #     reward += 2
-            # else:
-            #     reward -= 2
             
             # Track successful pickups
             if info.get("pick_up_passenger", False):
@@ -543,14 +536,22 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
             # Get batch number
             batch_num = (episode + 1) // batch_size
             
+            # Check if this is the best model so far
+            if current_batch_avg_reward > best_avg_reward:
+                best_avg_reward = current_batch_avg_reward
+                best_batch_num = batch_num
+                # Save the best model
+                agent.save(f"q_table_best.pkl")
+                print(f"\n*** New best model saved! Batch {batch_num} with avg reward: {best_avg_reward:.2f} ***")
+            
             # Print current batch summary
             print(f"\n=== Batch {batch_num} (Episodes {episode+1-batch_size+1}-{episode+1}) ===")
             print(f"Epsilon: {agent.epsilon:.4f}")
             global wrong_len
             # Print comparison table
             print("\n=== Batch Comparison ===")
-            print("Metric                | Previous Batch     | Current Batch")
-            print("----------------------|-------------------|------------------")
+            print("Metric                | Previous Batch     | Current Batch      | Best Batch")
+            print("----------------------|-------------------|-------------------|------------------")
             
             # Previous batch info (if available)
             if batch_num > 1:
@@ -565,7 +566,7 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
                 prev_pickup_time = batch_avg_pickup_time[-2]
                 prev_dropoff_time = batch_avg_dropoff_time[-2]
                 
-                print(f"Avg Reward            | {prev_reward:10.2f}       | {current_batch_avg_reward:10.2f}")
+                print(f"Avg Reward            | {prev_reward:10.2f}       | {current_batch_avg_reward:10.2f}       | {best_avg_reward:10.2f} (Batch {best_batch_num})")
                 print(f"Avg Steps             | {prev_steps:10.2f}       | {current_batch_avg_steps:10.2f}")
                 print(f"Pickup Rate           | {prev_pickup:10.2f}%      | {current_batch_pickup_rate:10.2f}%")
                 print(f"Delivery Rate         | {prev_delivery:10.2f}%      | {current_batch_delivery_rate:10.2f}%")
@@ -588,7 +589,7 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
 
             else:
                 # No previous batch
-                print(f"Avg Reward            | N/A              | {current_batch_avg_reward:10.2f}")
+                print(f"Avg Reward            | N/A              | {current_batch_avg_reward:10.2f}       | {best_avg_reward:10.2f} (Batch {best_batch_num})")
                 print(f"Avg Steps             | N/A              | {current_batch_avg_steps:10.2f}")
                 print(f"Pickup Rate           | N/A              | {current_batch_pickup_rate:10.2f}%")
                 print(f"Delivery Rate         | N/A              | {current_batch_delivery_rate:10.2f}%")
@@ -605,8 +606,9 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
                 print(f"Avg Steps to Pickup   | N/A              | {curr_pickup_str}")
                 print(f"Avg Steps to Dropoff  | N/A              | {curr_dropoff_str}")
             
-            # Print detailed information about the last episode
-            # print_last_episode_info(last_episode_info)
+            # Save model periodically
+            if (episode + 1) % (batch_size * 10) == 0:
+                agent.save(f"q_table_{episode+1}.pkl")
             
             # Reset batch counters and trackers
             batch_pickups = 0
@@ -618,13 +620,13 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
             batch_dropoff_steps = []
             current_batch_rewards = []
             current_batch_steps = []
-            
-            # Save model periodically
-            if (episode + 1) % (batch_size * 10) == 0:
-                agent.save(f"q_table_{episode+1}.pkl")
     
     # Save final model
-    agent.save("q_table.pkl")
+    agent.save("q_table_final.pkl")
+    
+    print(f"\n=== Training Complete ===")
+    print(f"Best model saved as 'q_table_best.pkl' (Batch {best_batch_num}, Avg Reward: {best_avg_reward:.2f})")
+    print(f"Final model saved as 'q_table_final.pkl'")
     
     # Return training history
     return {
@@ -638,15 +640,18 @@ def train(env, agent, num_episodes=1000, difficulty ="easy"):
         "batch_avg_invalid_pickups": batch_avg_invalid_pickups,
         "batch_avg_invalid_dropoffs": batch_avg_invalid_dropoffs,
         "batch_avg_pickup_time": batch_avg_pickup_time,
-        "batch_avg_dropoff_time": batch_avg_dropoff_time
+        "batch_avg_dropoff_time": batch_avg_dropoff_time,
+        "best_avg_reward": best_avg_reward,
+        "best_batch_num": best_batch_num
     }
-
 def get_action(obs):
     """Function called during testing to get the next action"""
     # Initialize on first call
     if not hasattr(get_action, "agent"):
         get_action.agent = QLearningAgent(epsilon=0.0)  # no exploration in test
-        get_action.agent.load("q_table.pkl")
+        # Load the best model instead of the final model
+        get_action.agent.load("q_table_best.pkl")
+        print("Loaded best model for testing")
         get_action.stage_0 = 0
         get_action.stage_1 = 0
         get_action.passenger_on = 0  # not carrying passenger
@@ -729,6 +734,7 @@ def get_action(obs):
             get_action.queue.append(action)
         elif len(get_action.queue)==12:
             get_action.queue.pop(0)
+            get_action.queue.append(action)
     
     # Remember current state and action
     get_action.last_state = state
@@ -737,7 +743,6 @@ def get_action(obs):
     if len(get_action.actions) == 5000:
         print(get_action.actions)
     return action
-
 if __name__ == "__main__":
     # Create environment and agent
     agent = QLearningAgent(
@@ -790,7 +795,6 @@ if __name__ == "__main__":
     # Train agent
     print("Starting training...")
     try:
-        
         history = train(env, agent, num_episodes=100000, difficulty="easy")
         
         # Second round of training with reset epsilon
@@ -799,6 +803,11 @@ if __name__ == "__main__":
         # history = train(env, agent, num_episodes=100000, difficulty="normal")
         
         print("Training complete! Final epsilon =", agent.epsilon)
+        
+        # Load the best model for testing
+        print("\nLoading best model for testing...")
+        test_agent = QLearningAgent(epsilon=0.0)  # No exploration for testing
+        test_agent.load("q_table_best.pkl")
         
         # Try to create a plot of the training history
         try:
@@ -813,6 +822,7 @@ if __name__ == "__main__":
             axes[0, 0].set_title('Success Rates per Batch')
             axes[0, 0].set_xlabel('Batch')
             axes[0, 0].set_ylabel('Success Rate (%)')
+            axes[0, 0].axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model (Batch {history["best_batch_num"]})')
             axes[0, 0].legend()
             axes[0, 0].grid(True)
             
@@ -822,12 +832,13 @@ if __name__ == "__main__":
             
             l1, = ax1.plot(history['batch_rewards'], 'b-', label='Avg Reward')
             l2, = ax2.plot(history['batch_steps'], 'r-', label='Avg Steps')
+            ax1.axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model (Batch {history["best_batch_num"]})')
             
             ax1.set_xlabel('Batch')
             ax1.set_ylabel('Average Reward', color='b')
             ax2.set_ylabel('Average Steps', color='r')
             
-            ax1.legend(handles=[l1, l2], loc='upper left')
+            ax1.legend(handles=[l1, l2, ax1.get_lines()[-1]], loc='upper left')
             ax1.grid(True)
             ax1.set_title('Reward and Steps per Batch')
             
@@ -836,11 +847,13 @@ if __name__ == "__main__":
             axes[1, 0].set_title('Average Wall Hits per Batch')
             axes[1, 0].set_xlabel('Batch')
             axes[1, 0].set_ylabel('Average Wall Hits')
+            axes[1, 0].axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model')
             axes[1, 0].grid(True)
             
             # Plot 4: Invalid Pickups and Dropoffs
             axes[1, 1].plot(history['batch_avg_invalid_pickups'], label='Invalid Pickups')
             axes[1, 1].plot(history['batch_avg_invalid_dropoffs'], label='Invalid Dropoffs')
+            axes[1, 1].axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model')
             axes[1, 1].set_title('Invalid Actions per Batch')
             axes[1, 1].set_xlabel('Batch')
             axes[1, 1].set_ylabel('Average Invalid Actions')
@@ -858,6 +871,7 @@ if __name__ == "__main__":
             
             axes[2, 0].plot(pickup_times, label='Time to Pickup')
             axes[2, 0].plot(dropoff_times, label='Time to Dropoff')
+            axes[2, 0].axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model')
             axes[2, 0].set_title('Average Time to Complete Tasks')
             axes[2, 0].set_xlabel('Batch')
             axes[2, 0].set_ylabel('Average Steps')
@@ -871,9 +885,11 @@ if __name__ == "__main__":
                 delivery_pickup_ratio.append(ratio)
             
             axes[2, 1].plot(delivery_pickup_ratio)
+            axes[2, 1].axvline(x=history['best_batch_num']-1, color='g', linestyle='--', label=f'Best Model')
             axes[2, 1].set_title('Delivery to Pickup Ratio per Batch')
             axes[2, 1].set_xlabel('Batch')
             axes[2, 1].set_ylabel('Ratio (%)')
+            axes[2, 1].legend()
             axes[2, 1].grid(True)
             
             plt.tight_layout()
@@ -883,7 +899,6 @@ if __name__ == "__main__":
             print(f"Could not create plot: {e}")
             
     except KeyboardInterrupt:
-        print("\nTraining interrupted. Saving model...")
+        print("\nTraining interrupted. Saving current model...")
         agent.save("q_table_interrupted.pkl")
-        print("Model saved to 'q_table_interrupted.pkl'")
-    # Get
+        print("Current model saved to 'q_table_interrupted.pkl'")
