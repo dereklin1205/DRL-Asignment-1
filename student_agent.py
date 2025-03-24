@@ -698,7 +698,7 @@ def get_action(obs):
                     if action != get_action.queue[0] and action != get_action.queue[1]:
                         break
         ## detected 4 cycle
-            elif get_action.queue[0] == get_action.queue[4] == get_action.queue[8]  and get_action.queue[1] == get_action.queue[5] == get_action.queue[9] == get_action.queue[13]and get_action.queue[2] == get_action.queue[6] == get_action.queue[10] and get_action.queue[3] == get_action.queue[7] == get_action.queue[11]:
+            elif get_action.queue[0] == get_action.queue[4] == get_action.queue[8]  and get_action.queue[1] == get_action.queue[5] == get_action.queue[9] and get_action.queue[2] == get_action.queue[6] == get_action.queue[10] and get_action.queue[3] == get_action.queue[7] == get_action.queue[11]:
                 while True:
                     action = random.randint(0, 3)
                     if action != get_action.queue[8]:
