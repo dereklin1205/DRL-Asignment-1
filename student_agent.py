@@ -695,14 +695,32 @@ def get_action(obs):
         ## detected 4 cycle or 2 cycle
             if get_action.queue[0] == get_action.queue[2] == get_action.queue[4] == get_action.queue[6] == get_action.queue[8] == get_action.queue[10]  and get_action.queue[1] == get_action.queue[3] == get_action.queue[5] == get_action.queue[7] == get_action.queue[9]== get_action.queue[11]:
                 while True:
+                    don_act = []
+                    if state[1] == 1:
+                        don_act.append(0)
+                    if state[2] == 1:
+                        don_act.append(1)
+                    if state[3] == 1:
+                        don_act.append(2)
+                    if state[4] == 1:
+                        don_act.append(3)
                     action = random.randint(0, 3)
-                    if action != get_action.queue[0] and action != get_action.queue[1]:
+                    if action not in don_act:
                         break
         ## detected 4 cycle
             elif get_action.queue[0] == get_action.queue[4] == get_action.queue[8]  and get_action.queue[1] == get_action.queue[5] == get_action.queue[9] and get_action.queue[2] == get_action.queue[6] == get_action.queue[10] and get_action.queue[3] == get_action.queue[7] == get_action.queue[11]:
                 while True:
+                    don_act = []
+                    if state[1] == 1:
+                        don_act.append(0)
+                    if state[2] == 1:
+                        don_act.append(1)
+                    if state[3] == 1:
+                        don_act.append(2)
+                    if state[4] == 1:
+                        don_act.append(3)
                     action = random.randint(0, 3)
-                    if action != get_action.queue[8]:
+                    if action not in don_act:
                         break
         
         
@@ -778,7 +796,7 @@ if __name__ == "__main__":
         agent.epsilon = 1.0
         agent.epsilon_decay = 0.99997
         print("\nStarting second round of training...")
-        history = train(env, agent, num_episodes=100000, difficulty="normal")
+        # history = train(env, agent, num_episodes=100000, difficulty="normal")
         
         print("Training complete! Final epsilon =", agent.epsilon)
         
