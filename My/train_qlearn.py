@@ -770,8 +770,9 @@ if __name__ == "__main__":
         
         # Second round of training with reset epsilon
         agent.epsilon = 1.0
+        agent.epsilon_decay = 0.99997
         print("\nStarting second round of training...")
-        history = train(env, agent, num_episodes=70000, difficulty="normal")
+        history = train(env, agent, num_episodes=100000, difficulty="normal")
         
         print("Training complete! Final epsilon =", agent.epsilon)
         
